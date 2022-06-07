@@ -6,6 +6,10 @@
     "redis",
     "cache"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soundxyz/fine-grained-cache.git"
+  },
   "license": "MIT",
   "author": "PabloSzx <pablosaez1995@gmail.com>",
   "exports": {
