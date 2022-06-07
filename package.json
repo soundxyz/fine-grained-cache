@@ -1,0 +1,64 @@
+{
+  "name": "@soundxyz/fine-grained-cache",
+  "version": "0.1.0",
+  "description": "Fine-grained cache helper using redis",
+  "keywords": [
+    "redis",
+    "cache"
+  ],
+  "license": "MIT",
+  "author": "PabloSzx <pablosaez1995@gmail.com>",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "require": "./dist/*.js",
+      "import": "./dist/*.mjs"
+    }
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepublishOnly": "concurrently -r \"bob-ts -f interop -i src -d dist --no-sourcemap\" \"tsc -p tsconfig.build.json\"",
+    "release": "changeset publish",
+    "test": "c8 --100 --include=src --exclude=src/promise.ts ava",
+    "test:watch": "ava --watch",
+    "test:watch:coverage": "bob-watch -w src test package.json -c \"pnpm test\""
+  },
+  "dependencies": {
+    "lru-cache": "^7.10.1",
+    "ms": "3.0.0-canary.1",
+    "superjson": "^1.9.1"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.22.0",
+    "@types/node": "^17.0.41",
+    "ava": "^4.3.0",
+    "bob-ts": "^4.0.0",
+    "bob-tsm": "^1.0.0",
+    "c8": "^7.11.3",
+    "concurrently": "^7.2.1",
+    "esbuild": "^0.14.42",
+    "execa": "^6.1.0",
+    "ioredis": "^5.0.6",
+    "redlock": "5.0.0-beta.2",
+    "typescript": "^4.7.3"
+  },
+  "peerDependencies": {
+    "ioredis": "^5.0.6",
+    "redlock": "5.0.0-beta.2"
+  },
+  "peerDependenciesMeta": {
+    "redlock": {
+      "optional": true
+    }
+  }
+}
