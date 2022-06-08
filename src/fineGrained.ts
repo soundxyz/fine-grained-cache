@@ -51,14 +51,20 @@ export function FineGrainedCache({
     client: RedLock;
     maxExpectedTime?: StringValue;
     retryLockTime?: StringValue;
+    /**
+     * @default false
+     */
+    useByDefault?: boolean
   };
   keyPrefix?: string;
   memoryCache?: MemoryCache<unknown>;
   onError?: (err: unknown) => void;
+  
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
   const defaultRetryLockTime = redLockConfig?.retryLockTime || "250 ms";
+  const useRedlockByDefault = redLockConfig?.useByDefault ?? false
 
   function generateCacheKey(keys: string | [string, ...(string | number)[]]) {
     return (
@@ -104,7 +110,7 @@ export function FineGrainedCache({
       // Don't use memory cache for time-specific invalidations
       checkShortMemoryCache = timedInvalidation == null,
       useSuperjson = true,
-      useRedlock = false,
+      useRedlock = useRedlockByDefault,
       forceUpdate = false,
     }: {
       timedInvalidation?: Date | (() => Date | Promise<Date>);
