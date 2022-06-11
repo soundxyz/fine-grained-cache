@@ -13,6 +13,7 @@ specifiers:
   ioredis: ^5.0.6
   lru-cache: ^7.10.1
   ms: 3.0.0-canary.1
+  prettier: ^2.6.2
   redlock: 5.0.0-beta.2
   superjson: ^1.9.1
   typescript: ^4.7.3
@@ -33,6 +34,7 @@ devDependencies:
   esbuild: 0.14.42
   execa: 6.1.0
   ioredis: 5.0.6
+  prettier: 2.6.2
   redlock: 5.0.0-beta.2
   typescript: 4.7.3
 
@@ -2141,6 +2143,12 @@ packages:
   /prettier/1.19.1:
     resolution: {integrity: sha512-s7PoyDv/II1ObgQunCbB9PdLmUcBZcnWOcxDh7O0N/UwDEsHyqkW+Qh28jW+mVuCdx7gLB0BotYI1Y6uI9iyew==}
     engines: {node: '>=4'}
+    hasBin: true
+    dev: true
+
+  /prettier/2.6.2:
+    resolution: {integrity: sha512-PkUpF+qoXTqhOeWL9fu7As8LXsIUZ1WYaJiY/a7McAQzxjk82OF0tibkFXVCDImZtWxbvojFjerkiLb0/q8mew==}
+    engines: {node: '>=10.13.0'}
     hasBin: true
     dev: true
 
