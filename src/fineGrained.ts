@@ -42,7 +42,7 @@ export type CachedCallback<T> = (options: {
      * Set TTL to `null` to disable caching
      */
     ttl?: StringValue | "Infinity" | null;
-    timedInvalidation?: undefined | null | Date | (() => Date | Promise<Date>);
+    timedInvalidation?: null | Date | (() => Date | Promise<Date>);
   }): void;
   getTTL(): {
     ttl: StringValue | "Infinity" | null;
