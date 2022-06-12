@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 1.1.0
+
+### Minor Changes
+
+- 44af92c: setTTL and getTTL to manage ttl dynamically
+
 ## 1.0.1
 
 ### Patch Changes
