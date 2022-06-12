@@ -1,5 +1,6 @@
 import test from "ava";
 import { join } from "path";
+import type { CachedCallback } from "../src";
 
 import { getCached, invalidateCache, memoryCache, redis } from "./utils";
 
@@ -319,4 +320,57 @@ test("fine grained - forceUpdate", async (t) => {
 
   t.is(data5, "hello world3");
   t.is(calls, 3);
+});
+
+test("fine grained - dynamic ttl", async (t) => {
+  let calls = 0;
+
+  const cb: CachedCallback<unknown> = async function cb({ setTTL, getTTL }) {
+    ++calls;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    t.deepEqual(getTTL(), {
+      ttl: "10 seconds",
+      timedInvalidation: undefined,
+    });
+
+    const tempTimedInvalidation = new Date();
+    setTTL({
+      ttl: "1 hour",
+      timedInvalidation: tempTimedInvalidation,
+    });
+
+    t.deepEqual(getTTL(), {
+      ttl: "1 hour",
+      timedInvalidation: tempTimedInvalidation,
+    });
+
+    setTTL({
+      ttl: null,
+      timedInvalidation: null,
+    });
+
+    t.deepEqual(getTTL(), {
+      ttl: null,
+      timedInvalidation: null,
+    });
+
+    return "hello world" + calls;
+  };
+
+  const data = await getCached(cb, {
+    keys: "test",
+    ttl: "10 seconds",
+  });
+
+  t.is(data, "hello world1");
+  t.is(calls, 1);
+
+  const data2 = await getCached(cb, {
+    keys: "test",
+    ttl: "10 seconds",
+  });
+
+  t.is(data2, "hello world2");
+  t.is(calls, 2);
 });

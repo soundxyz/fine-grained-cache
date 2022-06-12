@@ -36,6 +36,20 @@ function ConcurrentCachedCall<T>(key: string, cb: () => Promise<T>) {
   }) as Promise<Awaited<T>>;
 }
 
+export type CachedCallback<T> = (options: {
+  setTTL(options: {
+    /**
+     * Set TTL to `null` to disable caching
+     */
+    ttl?: StringValue | "Infinity" | null;
+    timedInvalidation?: null | Date | (() => Date | Promise<Date>);
+  }): void;
+  getTTL(): {
+    ttl: StringValue | "Infinity" | null;
+    timedInvalidation: undefined | null | Date | (() => Date | Promise<Date>);
+  };
+}) => T;
+
 export function FineGrainedCache({
   redis,
   redLock: redLockConfig,
@@ -54,17 +68,16 @@ export function FineGrainedCache({
     /**
      * @default false
      */
-    useByDefault?: boolean
+    useByDefault?: boolean;
   };
   keyPrefix?: string;
   memoryCache?: MemoryCache<unknown>;
   onError?: (err: unknown) => void;
-  
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
   const defaultRetryLockTime = redLockConfig?.retryLockTime || "250 ms";
-  const useRedlockByDefault = redLockConfig?.useByDefault ?? false
+  const useRedlockByDefault = redLockConfig?.useByDefault ?? false;
 
   function generateCacheKey(keys: string | [string, ...(string | number)[]]) {
     return (
@@ -100,7 +113,7 @@ export function FineGrainedCache({
   }
 
   function getCached<T>(
-    cb: () => T,
+    cb: CachedCallback<T>,
     {
       timedInvalidation,
       ttl,
@@ -204,18 +217,38 @@ export function FineGrainedCache({
       }
 
       async function getNewValue() {
-        const newValue = await cb();
+        let currentTTL: typeof ttl | null = ttl;
+        let currentTimedInvalidation: typeof timedInvalidation | null = timedInvalidation;
+
+        let expirySeconds: number = 1;
+
+        const newValue = await cb({
+          setTTL(options) {
+            currentTTL = options.ttl !== undefined ? options.ttl : currentTTL;
+            currentTimedInvalidation =
+              options.timedInvalidation !== undefined
+                ? options.timedInvalidation
+                : currentTimedInvalidation;
+          },
+          getTTL() {
+            return {
+              ttl: currentTTL,
+              timedInvalidation: currentTimedInvalidation,
+            };
+          },
+        });
 
         try {
-          const timedInvalidationDate = timedInvalidation
-            ? typeof timedInvalidation === "function"
-              ? await timedInvalidation()
-              : timedInvalidation
+          const timedInvalidationDate = currentTimedInvalidation
+            ? typeof currentTimedInvalidation === "function"
+              ? await currentTimedInvalidation()
+              : currentTimedInvalidation
             : null;
 
-          const ttlSeconds = ttl === "Infinity" ? -1 : getExpirySeconds(ttl);
+          const ttlSeconds =
+            currentTTL == null ? 0 : currentTTL === "Infinity" ? -1 : getExpirySeconds(currentTTL);
 
-          const expirySeconds =
+          expirySeconds =
             timedInvalidationDate && timedInvalidationDate.getTime() > Date.now()
               ? getRemainingSeconds(timedInvalidationDate)
               : ttlSeconds;
@@ -234,7 +267,7 @@ export function FineGrainedCache({
           onError(err);
         }
 
-        if (checkShortMemoryCache) memoryCache.set(key, newValue);
+        if (expirySeconds > 0 && checkShortMemoryCache) memoryCache.set(key, newValue);
 
         return newValue;
       }
