@@ -1,6 +1,7 @@
 import type { Redis } from "ioredis";
 import lruCache from "lru-cache";
 import ms, { StringValue } from "ms";
+import type { Logger } from "pino";
 import type { default as RedLock, Lock, Settings } from "redlock";
 import superjson from "superjson";
 import { getRemainingSeconds } from "./utils";
@@ -58,9 +59,11 @@ export function FineGrainedCache({
     max: 1000,
     ttl: ms("2 seconds"),
   }),
-  onError = console.error,
+  logger,
+  onError = logger.error,
 }: {
   redis: Redis;
+  logger: Logger;
   redLock?: {
     client: RedLock;
     maxExpectedTime?: StringValue;
@@ -93,7 +96,15 @@ export function FineGrainedCache({
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
     try {
+      const start = performance.now();
+
       const redisValue = await redis.get(key);
+
+      logger.info(
+        `Redis ${redisValue == null ? "MISS" : "HIT"} to ${key} took ${(
+          performance.now() - start
+        ).toFixed()}ms`
+      );
 
       if (redisValue != null) {
         const parsedRedisValue = useSuperjson
