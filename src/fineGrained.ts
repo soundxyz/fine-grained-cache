@@ -1,10 +1,14 @@
 import type { Redis } from "ioredis";
 import lruCache from "lru-cache";
 import ms, { StringValue } from "ms";
+import superjson from "superjson";
+import { setTimeout } from "timers/promises";
+
+import { getRemainingSeconds } from "./utils";
+
 import type { Logger } from "pino";
 import type { default as RedLock, Lock, Settings } from "redlock";
-import superjson from "superjson";
-import { getRemainingSeconds } from "./utils";
+export type LogLevel = "silent" | "info" | "tracing";
 
 // Cache the calls to the `ms` package
 const expiryMsCache: Record<string, number> = {};
@@ -17,6 +21,7 @@ function getExpirySeconds(value: StringValue) {
 }
 
 const NotFoundSymbol = Symbol.for("CacheNotFound");
+const RedisGetTimedOut = Symbol.for("RedisGetTimedOut");
 
 interface MemoryCache<T> {
   set(key: string, value: T): void;
@@ -51,6 +56,13 @@ export type CachedCallback<T> = (options: {
   };
 }) => T;
 
+export const Events = {
+  REDIS_GET: "REDIS_GET",
+  REDIS_GET_TIMED_OUT: "REDIS_GET_TIMED_OUT",
+} as const;
+
+export type Events = typeof Events[keyof typeof Events];
+
 export function FineGrainedCache({
   redis,
   redLock: redLockConfig,
@@ -59,11 +71,14 @@ export function FineGrainedCache({
     max: 1000,
     ttl: ms("2 seconds"),
   }),
+  redisGetTimeout,
   logger,
   onError = logger.error,
+  logEvents,
 }: {
   redis: Redis;
   logger: Logger;
+  redisGetTimeout?: number;
   redLock?: {
     client: RedLock;
     maxExpectedTime?: StringValue;
@@ -76,11 +91,22 @@ export function FineGrainedCache({
   keyPrefix?: string;
   memoryCache?: MemoryCache<unknown>;
   onError?: (err: unknown) => void;
+  /**
+   * @default
+   *  { "REDIS_GET_TIMED_OUT": true }
+   */
+  logEvents?: Record<Events, boolean>;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
   const defaultRetryLockTime = redLockConfig?.retryLockTime || "250 ms";
   const useRedlockByDefault = redLockConfig?.useByDefault ?? false;
+
+  function getTracing() {
+    const start = performance.now();
+
+    return () => `${(performance.now() - start).toFixed()}ms`;
+  }
 
   function generateCacheKey(keys: string | [string, ...(string | number)[]]) {
     return (
@@ -96,15 +122,48 @@ export function FineGrainedCache({
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
     try {
-      const start = performance.now();
+      const tracing = logEvents?.REDIS_GET ? getTracing() : null;
 
-      const redisValue = await redis.get(key);
+      const redisGetPromise = redis
+        .get(key)
+        .then((value) => {
+          if (tracing) {
+            logger.info(
+              `[${Events.REDIS_GET}] key=${key} cache=${
+                redisValue == null ? "MISS" : "HIT"
+              } time=${tracing()}`
+            );
+          }
 
-      logger.info(
-        `Redis ${redisValue == null ? "MISS" : "HIT"} to ${key} took ${(
-          performance.now() - start
-        ).toFixed()}ms`
-      );
+          return value;
+        })
+        .catch((err) => {
+          onError(err);
+          return null;
+        });
+
+      let redisValue: string | null;
+
+      if (redisGetTimeout != null) {
+        const value = await Promise.race([
+          redisGetPromise,
+          setTimeout(redisGetTimeout).then(() => RedisGetTimedOut) as Promise<
+            typeof RedisGetTimedOut
+          >,
+        ]);
+
+        if (value === RedisGetTimedOut) {
+          if (logEvents?.REDIS_GET_TIMED_OUT ?? true) {
+            logger.info(`[${Events.REDIS_GET_TIMED_OUT}] key=${key} timeout=${redisGetTimeout}ms`);
+          }
+
+          return NotFoundSymbol;
+        } else {
+          redisValue = value;
+        }
+      } else {
+        redisValue = await redisGetPromise;
+      }
 
       if (redisValue != null) {
         const parsedRedisValue = useSuperjson
