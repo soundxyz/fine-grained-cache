@@ -58,7 +58,13 @@ export type CachedCallback<T> = (options: {
 
 export const Events = {
   REDIS_GET: "REDIS_GET",
+  REDIS_SET: "REDIS_SET",
+  REDIS_SKIP_SET: "REDIS_SKIP_SET",
   REDIS_GET_TIMED_OUT: "REDIS_GET_TIMED_OUT",
+  MEMORY_CACHE_HIT: "MEMORY_CACHE_HIT",
+  INVALIDATE_KEY_SCAN: "INVALIDATE_KEY_SCAN",
+  INVALIDATED_KEYS: "INVALIDATED_KEYS",
+  EXECUTION_TIME: "EXECUTION_TIME",
 } as const;
 
 export type Events = typeof Events[keyof typeof Events];
@@ -95,7 +101,7 @@ export function FineGrainedCache({
    * @default
    *  { "REDIS_GET_TIMED_OUT": true }
    */
-  logEvents?: Record<Events, boolean>;
+  logEvents?: Partial<Record<Events, string | boolean | null>>;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
@@ -106,6 +112,29 @@ export function FineGrainedCache({
     const start = performance.now();
 
     return () => `${(performance.now() - start).toFixed()}ms`;
+  }
+
+  function logMessage(
+    code: Events,
+    paramsObject: Record<string, string | number | boolean | undefined>
+  ) {
+    let codeValue = logEvents?.[code];
+
+    if (!codeValue) return;
+
+    if (typeof codeValue !== "string") codeValue = Events[code];
+
+    let params = "";
+
+    for (const key in paramsObject) {
+      const value = paramsObject[key];
+
+      if (value === undefined) continue;
+
+      params += " " + key + "=" + paramsObject[key];
+    }
+
+    logger.info(`[${codeValue}]${params}`);
   }
 
   function generateCacheKey(keys: string | [string, ...(string | number)[]]) {
@@ -121,40 +150,49 @@ export function FineGrainedCache({
     useSuperjson: boolean,
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
+    if (redisGetTimeout === 0) {
+      if (logEvents?.REDIS_GET_TIMED_OUT ?? true) {
+        logMessage("REDIS_GET_TIMED_OUT", {
+          key,
+          timeout: redisGetTimeout,
+        });
+      }
+
+      return NotFoundSymbol;
+    }
+
     try {
       const tracing = logEvents?.REDIS_GET ? getTracing() : null;
-
-      const redisGetPromise = redis
-        .get(key)
-        .then((value) => {
-          if (tracing) {
-            logger.info(
-              `[${Events.REDIS_GET}] key=${key} cache=${
-                redisValue == null ? "MISS" : "HIT"
-              } time=${tracing()}`
-            );
-          }
-
-          return value;
-        })
-        .catch((err) => {
-          onError(err);
-          return null;
-        });
 
       let redisValue: string | null;
 
       if (redisGetTimeout != null) {
+        let timedOut = false;
         const value = await Promise.race([
-          redisGetPromise,
+          redis.get(key).then((value) => {
+            if (tracing) {
+              logMessage("REDIS_GET", {
+                key,
+                cache: redisValue == null ? "MISS" : "HIT",
+                timedOut,
+                time: tracing(),
+              });
+            }
+
+            return value;
+          }),
           setTimeout(redisGetTimeout).then(() => RedisGetTimedOut) as Promise<
             typeof RedisGetTimedOut
           >,
         ]);
 
         if (value === RedisGetTimedOut) {
+          timedOut = true;
           if (logEvents?.REDIS_GET_TIMED_OUT ?? true) {
-            logger.info(`[${Events.REDIS_GET_TIMED_OUT}] key=${key} timeout=${redisGetTimeout}ms`);
+            logMessage("REDIS_GET_TIMED_OUT", {
+              key,
+              timeout: redisGetTimeout,
+            });
           }
 
           return NotFoundSymbol;
@@ -162,7 +200,15 @@ export function FineGrainedCache({
           redisValue = value;
         }
       } else {
-        redisValue = await redisGetPromise;
+        redisValue = await redis.get(key);
+
+        if (tracing) {
+          logMessage("REDIS_GET", {
+            key,
+            cache: redisValue == null ? "MISS" : "HIT",
+            time: tracing(),
+          });
+        }
       }
 
       if (redisValue != null) {
@@ -227,7 +273,14 @@ export function FineGrainedCache({
 
     // Check the in-memory cache
     if (checkShortMemoryCache && forceUpdate === false) {
-      if (memoryCache.has(key)) return memoryCache.get(key) as Awaited<T>;
+      if (memoryCache.has(key)) {
+        if (logEvents?.MEMORY_CACHE_HIT) {
+          logMessage("MEMORY_CACHE_HIT", {
+            key,
+          });
+        }
+        return memoryCache.get(key) as Awaited<T>;
+      }
     }
 
     // Multiple concurrent calls with the same key should re-use the same promise
@@ -292,6 +345,8 @@ export function FineGrainedCache({
 
         let expirySeconds: number = 1;
 
+        const tracing = logEvents?.EXECUTION_TIME ? getTracing() : null;
+
         const newValue = await cb({
           setTTL(options) {
             currentTTL = options.ttl !== undefined ? options.ttl : currentTTL;
@@ -307,6 +362,12 @@ export function FineGrainedCache({
             };
           },
         });
+
+        if (tracing) {
+          logMessage("EXECUTION_TIME", {
+            key,
+          });
+        }
 
         try {
           const timedInvalidationDate = currentTimedInvalidation
@@ -328,9 +389,36 @@ export function FineGrainedCache({
             : JSON.stringify(newValue);
 
           if (expirySeconds > 0) {
+            const tracing = logEvents?.REDIS_SET ? getTracing() : null;
+
             await redis.setex(key, expirySeconds, stringifiedValue);
+
+            if (tracing) {
+              logMessage("REDIS_SET", {
+                key,
+                expirySeconds,
+                timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                time: tracing(),
+              });
+            }
           } else if (ttl === "Infinity") {
+            const tracing = logEvents?.REDIS_SET ? getTracing() : null;
+
             await redis.set(key, stringifiedValue);
+
+            if (tracing) {
+              logMessage("REDIS_SET", {
+                key,
+                expirySeconds: "Infinity",
+                timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                time: tracing(),
+              });
+            }
+          } else if (logEvents?.REDIS_SKIP_SET) {
+            logMessage("REDIS_SKIP_SET", {
+              key,
+              timedInvalidationDate: timedInvalidationDate?.toISOString(),
+            });
           }
         } catch (err) {
           // If redis/time-invalidation getter fails, report the issue and continue
@@ -351,10 +439,34 @@ export function FineGrainedCache({
 
     const key = generateCacheKey(keys);
 
-    const keysToInvalidate = key.includes("*") ? await redis.keys(key) : [key];
+    let keysToInvalidate: string[];
+
+    if (key.includes("*")) {
+      const tracing = logEvents?.INVALIDATE_KEY_SCAN ? getTracing() : null;
+      keysToInvalidate = await redis.keys(key);
+      if (tracing) {
+        logMessage("INVALIDATE_KEY_SCAN", {
+          key,
+          keysToInvalidate: keysToInvalidate.join(","),
+          time: tracing(),
+        });
+      }
+    } else {
+      keysToInvalidate = [key];
+    }
 
     if (keysToInvalidate.length) {
+      const tracing = logEvents?.INVALIDATED_KEYS ? getTracing() : null;
+
       await redis.del(keysToInvalidate);
+
+      if (tracing) {
+        logMessage("INVALIDATED_KEYS", {
+          key,
+          invalidatedKeys: keysToInvalidate.join(","),
+          time: tracing(),
+        });
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@soundxyz/fine-grained-cache-debug",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Fine-grained cache helper using redis",
   "keywords": [
     "redis",
