@@ -366,6 +366,7 @@ export function FineGrainedCache({
         if (tracing) {
           logMessage("EXECUTION_TIME", {
             key,
+            time: tracing(),
           });
         }
 
