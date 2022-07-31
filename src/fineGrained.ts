@@ -181,9 +181,7 @@ export function FineGrainedCache({
 
             return value;
           }),
-          setTimeout(redisGetTimeout).then(() => RedisGetTimedOut) as Promise<
-            typeof RedisGetTimedOut
-          >,
+          setTimeout(redisGetTimeout, RedisGetTimedOut),
         ]);
 
         if (value === RedisGetTimedOut) {
