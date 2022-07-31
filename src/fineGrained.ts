@@ -161,9 +161,10 @@ export function FineGrainedCache({
       return NotFoundSymbol;
     }
 
-    try {
-      const tracing = logEvents?.REDIS_GET ? getTracing() : null;
+    const tracing =
+      logEvents?.REDIS_GET || (logEvents?.REDIS_GET_TIMED_OUT ?? true) ? getTracing() : null;
 
+    try {
       let redisValue: string | null;
 
       if (redisGetTimeout != null) {
@@ -190,6 +191,7 @@ export function FineGrainedCache({
             logMessage("REDIS_GET_TIMED_OUT", {
               key,
               timeout: redisGetTimeout,
+              time: tracing?.(),
             });
           }
 
