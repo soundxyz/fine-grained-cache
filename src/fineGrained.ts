@@ -2,9 +2,9 @@ import type { Redis } from "ioredis";
 import lruCache from "lru-cache";
 import ms, { StringValue } from "ms";
 import superjson from "superjson";
-import { setTimeout } from "timers/promises";
+import { setTimeout as timersSetTimeout } from "timers/promises";
 
-import { getRemainingSeconds } from "./utils";
+import { createDeferredPromise, DeferredPromise, getRemainingSeconds } from "./utils";
 
 import type { Logger } from "pino";
 import type { default as RedLock, Lock, Settings } from "redlock";
@@ -65,6 +65,7 @@ export const Events = {
   INVALIDATE_KEY_SCAN: "INVALIDATE_KEY_SCAN",
   INVALIDATED_KEYS: "INVALIDATED_KEYS",
   EXECUTION_TIME: "EXECUTION_TIME",
+  PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
 } as const;
 
 export type Events = typeof Events[keyof typeof Events];
@@ -81,6 +82,7 @@ export function FineGrainedCache({
   logger,
   onError = logger.error,
   logEvents,
+  pipelineRedisGets,
 }: {
   redis: Redis;
   logger: Logger;
@@ -102,6 +104,7 @@ export function FineGrainedCache({
    *  { "REDIS_GET_TIMED_OUT": true }
    */
   logEvents?: Partial<Record<Events, string | boolean | null>>;
+  pipelineRedisGets?: boolean;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
@@ -145,6 +148,80 @@ export function FineGrainedCache({
     ).toLowerCase();
   }
 
+  let pendingRedisGets: [key: string, promise: DeferredPromise<null | string>][] = [];
+
+  let pendingRedisTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  function pipelinedRedisGet(key: string) {
+    if (pendingRedisTimeout != null) {
+      clearTimeout(pendingRedisTimeout);
+    }
+
+    const promise = createDeferredPromise<null | string>();
+
+    pendingRedisGets.push([key, promise]);
+
+    pendingRedisTimeout = setTimeout(async () => {
+      const [keys, promises] = pendingRedisGets.reduce<
+        [string[], DeferredPromise<null | string>[]]
+      >(
+        (acc, [key, promise]) => {
+          acc[0].push(key);
+          acc[1].push(promise);
+          return acc;
+        },
+        [[], []]
+      );
+
+      const tracing = logEvents?.PIPELINED_REDIS_GETS ? getTracing() : null;
+
+      pendingRedisGets = [];
+
+      const pipeline = redis.pipeline(keys.map((key) => ["get", key]));
+
+      try {
+        const results = await pipeline.exec();
+
+        if (tracing) {
+          logMessage("PIPELINED_REDIS_GETS", {
+            keys: keys.join(","),
+            cache:
+              results
+                ?.map(([, result]) => (typeof result === "string" ? "HIT" : "MISS"))
+                .join(",") || "null",
+            size: promises.length,
+            time: tracing(),
+          });
+        }
+
+        let accIndex = 0;
+        for (const promise of promises) {
+          const index = accIndex++;
+
+          const result = results?.[index];
+
+          if (!result) {
+            promise.resolve(null);
+          } else {
+            const [error, value] = result;
+
+            if (error) {
+              promise.reject(error);
+            } else {
+              promise.resolve(typeof value != "string" ? null : value);
+            }
+          }
+        }
+      } catch (err) {
+        for (const promise of promises) {
+          promise.reject(err);
+        }
+      }
+    });
+
+    return promise.promise;
+  }
+
   async function getRedisCacheValue<T>(
     key: string,
     useSuperjson: boolean,
@@ -170,19 +247,21 @@ export function FineGrainedCache({
       if (redisGetTimeout != null) {
         let timedOut = false;
         const value = await Promise.race([
-          redis.get(key).then((value) => {
-            if (tracing) {
-              logMessage("REDIS_GET", {
-                key,
-                cache: redisValue == null ? "MISS" : "HIT",
-                timedOut,
-                time: tracing(),
-              });
-            }
+          pipelineRedisGets
+            ? pipelinedRedisGet(key)
+            : redis.get(key).then((value) => {
+                if (tracing) {
+                  logMessage("REDIS_GET", {
+                    key,
+                    cache: redisValue == null ? "MISS" : "HIT",
+                    timedOut,
+                    time: tracing(),
+                  });
+                }
 
-            return value;
-          }),
-          setTimeout(redisGetTimeout, RedisGetTimedOut),
+                return value;
+              }),
+          timersSetTimeout(redisGetTimeout, RedisGetTimedOut),
         ]);
 
         if (value === RedisGetTimedOut) {
@@ -199,6 +278,8 @@ export function FineGrainedCache({
         } else {
           redisValue = value;
         }
+      } else if (pipelineRedisGets) {
+        redisValue = await pipelinedRedisGet(key);
       } else {
         redisValue = await redis.get(key);
 
