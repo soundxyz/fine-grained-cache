@@ -83,6 +83,7 @@ export function FineGrainedCache({
   onError = logger.error,
   logEvents,
   pipelineRedisGets,
+  defaultUseMemoryCache = true,
 }: {
   redis: Redis;
   logger: Logger;
@@ -105,6 +106,10 @@ export function FineGrainedCache({
    */
   logEvents?: Partial<Record<Events, string | boolean | null>>;
   pipelineRedisGets?: boolean;
+  /**
+   * @default true
+   */
+  defaultUseMemoryCache?: boolean;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
@@ -317,8 +322,7 @@ export function FineGrainedCache({
       keys,
       maxExpectedTime = defaultMaxExpectedTime,
       retryLockTime = defaultRetryLockTime,
-      // Don't use memory cache for time-specific invalidations
-      checkShortMemoryCache = timedInvalidation == null,
+      checkShortMemoryCache = defaultUseMemoryCache,
       useSuperjson = true,
       useRedlock = useRedlockByDefault,
       forceUpdate = false,
@@ -350,6 +354,11 @@ export function FineGrainedCache({
       forceUpdate?: boolean;
     }
   ): Awaited<T> | Promise<Awaited<T>> {
+    // Don't use memory cache for time-specific invalidations
+    if (checkShortMemoryCache && timedInvalidation != null) {
+      checkShortMemoryCache = false;
+    }
+
     const key = generateCacheKey(keys);
 
     // Check the in-memory cache
