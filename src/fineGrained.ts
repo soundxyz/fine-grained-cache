@@ -79,6 +79,7 @@ export function FineGrainedCache({
   logEvents,
   GETRedisTimeout,
   pipelineRedisGET,
+  defaultUseMemoryCache = true,
 }: {
   redis: Redis;
   redLock?: {
@@ -111,6 +112,14 @@ export function FineGrainedCache({
    * If "number" is specified, that's the maximum amount of operations to be sent in a single pipeline
    */
   pipelineRedisGET?: boolean | number;
+  /**
+   * Should `getCached` use memory cache by default?
+   *
+   * It can be overriden on `getCached`
+   *
+   * @default true
+   */
+  defaultUseMemoryCache?: boolean;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
@@ -315,8 +324,7 @@ export function FineGrainedCache({
       keys,
       maxExpectedTime = defaultMaxExpectedTime,
       retryLockTime = defaultRetryLockTime,
-      // Don't use memory cache for time-specific invalidations
-      checkShortMemoryCache = timedInvalidation == null,
+      checkShortMemoryCache = defaultUseMemoryCache,
       useSuperjson = true,
       useRedlock = useRedlockByDefault,
       forceUpdate = false,
@@ -348,6 +356,11 @@ export function FineGrainedCache({
       forceUpdate?: boolean;
     }
   ): Awaited<T> | Promise<Awaited<T>> {
+    // Don't use memory cache for time-specific invalidations
+    if (checkShortMemoryCache && timedInvalidation != null) {
+      checkShortMemoryCache = false;
+    }
+
     const key = generateCacheKey(keys);
 
     // Check the in-memory cache
