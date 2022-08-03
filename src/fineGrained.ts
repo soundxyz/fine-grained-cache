@@ -65,7 +65,11 @@ export const Events = {
 
 export type Events = typeof Events[keyof typeof Events];
 
-type ParamsObject = Record<string, string | number | boolean | null | undefined>;
+export type EventParamsObject = Record<string, string | number | boolean | null | undefined>;
+
+export type LogEventArgs = { message: string; code: Events; params: EventParamsObject };
+
+export type LoggedEvents = Partial<Record<Events, string | boolean | null>>;
 
 export function FineGrainedCache({
   redis,
@@ -98,9 +102,9 @@ export function FineGrainedCache({
    * Enable event logging
    */
   logEvents?: {
-    log: (args: { message: string; code: Events; params: ParamsObject }) => void;
+    log: (args: LogEventArgs) => void;
 
-    events: Partial<Record<Events, string | boolean | null>>;
+    events: LoggedEvents;
   };
   /**
    * Set a maximum amount of milliseconds for getCached to wait for the GET redis response
@@ -135,7 +139,7 @@ export function FineGrainedCache({
   const enabledLogEvents = logEvents?.events;
 
   const logMessage = logEvents
-    ? function logMessage(code: Events, params: ParamsObject) {
+    ? function logMessage(code: Events, params: EventParamsObject) {
         let codeValue = logEvents.events[code];
 
         if (!codeValue) return;

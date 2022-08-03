@@ -1,8 +1,8 @@
 import test from "ava";
 import { join } from "path";
-import type { CachedCallback } from "../src";
-
-import { getCached, invalidateCache, memoryCache, redis } from "./utils";
+import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
+import waitForExpect from "wait-for-expect";
+import { getCached, invalidateCache, logEverything, memoryCache, redis } from "./utils";
 
 test.beforeEach(async () => {
   await redis.flushall();
@@ -373,4 +373,65 @@ test("fine grained - dynamic ttl", async (t) => {
 
   t.is(data2, "hello world2");
   t.is(calls, 2);
+});
+
+test.only("logged events", async (t) => {
+  const events: LogEventArgs[] = [];
+
+  const { getCached } = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events.push(args),
+      events: logEverything,
+    },
+  });
+
+  await getCached(
+    () => {
+      return 123;
+    },
+    {
+      keys: "test",
+      ttl: "Infinity",
+    }
+  );
+
+  t.deepEqual(
+    events.map((v) => v.code),
+    ["REDIS_GET", "EXECUTION_TIME", "REDIS_SET"]
+  );
+});
+
+test.only("logged events with timeout", async (t) => {
+  const events: LogEventArgs[] = [];
+
+  const { getCached } = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events.push(args),
+      events: logEverything,
+    },
+    GETRedisTimeout: 0,
+  });
+
+  await getCached(
+    async () => {
+      return 123;
+    },
+    {
+      keys: "test",
+      ttl: "Infinity",
+    }
+  );
+
+  t.true(events[0].code === "REDIS_GET_TIMED_OUT");
+
+  await waitForExpect(() => {
+    t.is(events.length, 4);
+  });
+
+  t.true(events.some((v) => v.code === "REDIS_GET"));
+  t.true(events.some((v) => v.code === "REDIS_GET_TIMED_OUT"));
+  t.true(events.some((v) => v.code === "EXECUTION_TIME"));
+  t.true(events.some((v) => v.code === "REDIS_SET"));
 });
