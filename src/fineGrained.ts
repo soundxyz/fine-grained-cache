@@ -266,7 +266,7 @@ export function FineGrainedCache({
               if (enabledLogEvents?.REDIS_GET) {
                 logMessage("REDIS_GET", {
                   key,
-                  cache: redisValue == null ? "MISS" : "HIT",
+                  cache: value == null ? "MISS" : "HIT",
                   timedOut,
                   time: tracing?.(),
                 });
