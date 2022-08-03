@@ -4,6 +4,7 @@ import ms, { StringValue } from "ms";
 import type { default as RedLock, Lock, Settings } from "redlock";
 import superjson from "superjson";
 import { getRemainingSeconds } from "./utils";
+import { setTimeout as timersSetTimeout } from "timers/promises";
 
 // Cache the calls to the `ms` package
 const expiryMsCache: Record<string, number> = {};
@@ -52,6 +53,7 @@ export type CachedCallback<T> = (options: {
 
 export const Events = {
   REDIS_GET: "REDIS_GET",
+  REDIS_GET_TIMED_OUT: "REDIS_GET_TIMED_OUT",
   REDIS_SET: "REDIS_SET",
   REDIS_SKIP_SET: "REDIS_SKIP_SET",
   MEMORY_CACHE_HIT: "MEMORY_CACHE_HIT",
@@ -74,6 +76,7 @@ export function FineGrainedCache({
   }),
   onError = console.error,
   logEvents,
+  GETRedisTimeout,
 }: {
   redis: Redis;
   redLock?: {
@@ -96,6 +99,10 @@ export function FineGrainedCache({
 
     events: Partial<Record<Events, string | boolean | null>>;
   };
+  /**
+   * Set a maximum amount of milliseconds for getCached to wait for the GET redis response
+   */
+  GETRedisTimeout?: number;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
@@ -149,16 +156,47 @@ export function FineGrainedCache({
     useSuperjson: boolean,
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
-    const tracing = enabledLogEvents?.REDIS_GET ? getTracing() : null;
+    const tracing =
+      enabledLogEvents?.REDIS_GET || enabledLogEvents?.REDIS_GET_TIMED_OUT ? getTracing() : null;
 
+    let timedOut: true | undefined = undefined;
     try {
-      const redisValue = await redis.get(key);
+      const redisGet = redis.get(key).then(
+        (value) => {
+          if (enabledLogEvents?.REDIS_GET) {
+            logMessage("REDIS_GET", {
+              key,
+              cache: redisValue == null ? "MISS" : "HIT",
+              timedOut,
+              time: tracing?.(),
+            });
+          }
 
-      if (tracing) {
-        logMessage("REDIS_GET", {
-          key,
-          time: tracing(),
-        });
+          return value;
+        },
+        (err) => {
+          onError(err);
+
+          return null;
+        }
+      );
+
+      const redisValue = await (GETRedisTimeout != null
+        ? Promise.race([redisGet, timersSetTimeout(GETRedisTimeout, undefined)])
+        : redisGet);
+
+      if (redisValue === undefined) {
+        timedOut = true;
+
+        if (enabledLogEvents?.REDIS_GET_TIMED_OUT) {
+          logMessage("REDIS_GET_TIMED_OUT", {
+            key,
+            timeout: GETRedisTimeout,
+            time: tracing?.(),
+          });
+        }
+
+        return NotFoundSymbol;
       }
 
       if (redisValue != null) {
