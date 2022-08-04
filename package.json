@@ -34,6 +34,7 @@
     "prepublishOnly": "concurrently -r \"bob-ts -f interop -i src -d dist --no-sourcemap\" \"tsc -p tsconfig.build.json\"",
     "release": "changeset publish",
     "test": "c8 --include=src --exclude=src/promise.ts ava",
+    "test:html": "c8 -r=lcov --include=src --exclude=src/promise.ts ava && serve coverage/lcov-report",
     "test:watch": "ava --watch",
     "test:watch:coverage": "bob-watch -w src test package.json -c \"pnpm test\""
   },
@@ -55,6 +56,7 @@
     "ioredis": "^5.0.6",
     "prettier": "^2.6.2",
     "redlock": "5.0.0-beta.2",
+    "serve": "^14.0.1",
     "typescript": "^4.7.3"
   },
   "peerDependencies": {
