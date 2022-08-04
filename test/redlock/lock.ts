@@ -1,4 +1,4 @@
-import { getCached } from "../utils";
+import { getCached } from "../utilsWithRedlock";
 
 (async () => {
   const data = await getCached(
@@ -12,6 +12,7 @@ import { getCached } from "../utils";
       ttl: "10 minutes",
       keys: "redlock-test",
       maxExpectedTime: "7 seconds",
+      useRedlock: true,
     }
   );
 

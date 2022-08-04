@@ -61,6 +61,9 @@ export const Events = {
   INVALIDATED_KEYS: "INVALIDATED_KEYS",
   EXECUTION_TIME: "EXECUTION_TIME",
   PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
+  REDLOCK_ACQUIRED: "REDLOCK_ACQUIRED",
+  REDLOCK_RELEASED: "REDLOCK_RELEASED",
+  REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
 } as const;
 
 export type Events = typeof Events[keyof typeof Events];
@@ -400,11 +403,21 @@ export function FineGrainedCache({
         const retryCount = Math.round((maxLockTime / retryDelay) * 2);
 
         try {
+          const tracing = enabledLogEvents?.REDLOCK_ACQUIRED ? getTracing() : null;
+
           // Acquire a lock to prevent this function being called at the same time by more than a single instance
           lock = await redLock.acquire(["lock:" + key], maxLockTime, {
             retryCount,
             retryDelay,
           } as Settings);
+
+          if (tracing) {
+            logMessage("REDLOCK_ACQUIRED", {
+              key,
+              attempts: lock.attempts.length,
+              time: tracing(),
+            });
+          }
         } catch (err) {
           // If acquiring the lock fails, fallback into executing the callback
           onError(err);
@@ -414,20 +427,44 @@ export function FineGrainedCache({
       try {
         // If it took more than 1 attempt to get the lock, check if the value in redis has been set
         if (lock && lock.attempts.length > 1) {
-          // Release the lock for other readers
-          lock
-            .release()
-            // Errors while releasing the lock don't matter
-            .catch(() => null)
-            .finally(() => (lock = null));
+          {
+            const tracing = enabledLogEvents?.REDLOCK_RELEASED ? getTracing() : null;
+            // Release the lock for other readers
+            lock
+              .release()
+              .then(({ attempts }) => {
+                if (tracing) {
+                  logMessage("REDLOCK_RELEASED", {
+                    key,
+                    attempts: attempts.length,
+                    time: tracing(),
+                  });
+                }
+              })
+              // Errors while releasing the lock don't matter
+              .catch(() => null)
+              .finally(() => (lock = null));
+          }
 
-          const redisValueAfterLock = await getRedisCacheValue<Awaited<T>>(
-            key,
-            useSuperjson,
-            checkShortMemoryCache
-          );
+          {
+            const tracing = enabledLogEvents?.REDLOCK_GET_AFTER_ACQUIRE ? getTracing() : null;
 
-          if (redisValueAfterLock !== NotFoundSymbol) return redisValueAfterLock;
+            const redisValueAfterLock = await getRedisCacheValue<Awaited<T>>(
+              key,
+              useSuperjson,
+              checkShortMemoryCache
+            );
+
+            if (tracing) {
+              logMessage("REDLOCK_GET_AFTER_ACQUIRE", {
+                key,
+                cache: redisValueAfterLock !== NotFoundSymbol ? "HIT" : "MISS",
+                time: tracing(),
+              });
+            }
+
+            if (redisValueAfterLock !== NotFoundSymbol) return redisValueAfterLock;
+          }
         }
 
         return await getNewValue();
@@ -545,7 +582,7 @@ export function FineGrainedCache({
       if (tracing) {
         logMessage("INVALIDATE_KEY_SCAN", {
           key,
-          keysToInvalidate: keysToInvalidate.join(","),
+          keysToInvalidate: keysToInvalidate.join(",") || "null",
           time: tracing(),
         });
       }
@@ -561,7 +598,7 @@ export function FineGrainedCache({
       if (tracing) {
         logMessage("INVALIDATED_KEYS", {
           key,
-          invalidatedKeys: keysToInvalidate.join(","),
+          invalidatedKeys: keysToInvalidate.join(",") || "null",
           time: tracing(),
         });
       }

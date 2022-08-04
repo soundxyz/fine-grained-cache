@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   redis:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    image: redis:7-alpine
     ulimits:
       memlock: -1
     ports:
