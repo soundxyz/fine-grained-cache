@@ -184,7 +184,7 @@ export function FineGrainedCache({
       clearTimeout(pendingRedisTimeout);
     }
 
-    if (typeof pipelineRedisGET === "number" && pendingRedisGets.length > pipelineRedisGET) {
+    if (typeof pipelineRedisGET === "number" && pendingRedisGets.length >= pipelineRedisGET) {
       executePipeline();
     }
 
