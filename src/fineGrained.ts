@@ -180,7 +180,7 @@ export function FineGrainedCache({
   let pendingRedisTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function pipelinedRedisGet(key: string) {
-    if (pendingRedisTimeout != null) {
+    if (pendingRedisTimeout !== undefined) {
       clearTimeout(pendingRedisTimeout);
     }
 
@@ -197,16 +197,30 @@ export function FineGrainedCache({
     return promise.promise;
 
     async function executePipeline() {
-      const [keys, promises] = pendingRedisGets.reduce<
-        [string[], DeferredPromise<null | string>[]]
-      >(
+      pendingRedisTimeout = undefined;
+
+      const size = pendingRedisGets.length;
+      const { promises, commands } = pendingRedisGets.reduce<{
+        promises: {
+          promise: DeferredPromise<string | null>;
+          index: number;
+        }[];
+        commands: ["get", string][];
+      }>(
         (acc, [key, promise], index) => {
-          acc[0][index] = key;
-          acc[1][index] = promise;
+          acc.promises[index] = {
+            promise,
+            index,
+          };
+
+          acc.commands[index] = ["get", key];
 
           return acc;
         },
-        [new Array(pendingRedisGets.length), new Array(pendingRedisGets.length)]
+        {
+          promises: new Array(size),
+          commands: new Array(size),
+        }
       );
 
       const tracing = enabledLogEvents?.PIPELINED_REDIS_GETS ? getTracing() : null;
@@ -214,26 +228,23 @@ export function FineGrainedCache({
       pendingRedisGets = [];
 
       try {
-        const pipeline = redis.pipeline(keys.map((key) => ["get", key]));
+        const pipeline = redis.pipeline(commands);
 
         const results = await pipeline.exec();
 
         if (tracing) {
           logMessage("PIPELINED_REDIS_GETS", {
-            keys: keys.join(","),
+            keys: commands.map(([, key]) => key).join(","),
             cache:
               results
                 ?.map(([, result]) => (typeof result === "string" ? "HIT" : "MISS"))
                 .join(",") || "null",
-            size: promises.length,
+            size,
             time: tracing(),
           });
         }
 
-        let accIndex = 0;
-        for (const promise of promises) {
-          const index = accIndex++;
-
+        for (const { promise, index } of promises) {
           const result = results?.[index];
 
           if (!result) {
@@ -249,7 +260,7 @@ export function FineGrainedCache({
           }
         }
       } catch (err) {
-        for (const promise of promises) {
+        for (const { promise } of promises) {
           promise.reject(err);
         }
       }
