@@ -3,7 +3,8 @@ import lruCache from "lru-cache";
 import ms, { StringValue } from "ms";
 import type { default as RedLock, Lock, Settings } from "redlock";
 import superjson from "superjson";
-import { getRemainingSeconds } from "./utils";
+import { createDeferredPromise, DeferredPromise, getRemainingSeconds } from "./utils";
+import { setTimeout as timersSetTimeout } from "timers/promises";
 
 // Cache the calls to the `ms` package
 const expiryMsCache: Record<string, number> = {};
@@ -50,6 +51,29 @@ export type CachedCallback<T> = (options: {
   };
 }) => T;
 
+export const Events = {
+  REDIS_GET: "REDIS_GET",
+  REDIS_GET_TIMED_OUT: "REDIS_GET_TIMED_OUT",
+  REDIS_SET: "REDIS_SET",
+  REDIS_SKIP_SET: "REDIS_SKIP_SET",
+  MEMORY_CACHE_HIT: "MEMORY_CACHE_HIT",
+  INVALIDATE_KEY_SCAN: "INVALIDATE_KEY_SCAN",
+  INVALIDATED_KEYS: "INVALIDATED_KEYS",
+  EXECUTION_TIME: "EXECUTION_TIME",
+  PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
+  REDLOCK_ACQUIRED: "REDLOCK_ACQUIRED",
+  REDLOCK_RELEASED: "REDLOCK_RELEASED",
+  REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
+} as const;
+
+export type Events = typeof Events[keyof typeof Events];
+
+export type EventParamsObject = Record<string, string | number | boolean | null | undefined>;
+
+export type LogEventArgs = { message: string; code: Events; params: EventParamsObject };
+
+export type LoggedEvents = Partial<Record<Events, string | boolean | null>>;
+
 export function FineGrainedCache({
   redis,
   redLock: redLockConfig,
@@ -59,6 +83,10 @@ export function FineGrainedCache({
     ttl: ms("2 seconds"),
   }),
   onError = console.error,
+  logEvents,
+  GETRedisTimeout,
+  pipelineRedisGET,
+  defaultUseMemoryCache = true,
 }: {
   redis: Redis;
   redLock?: {
@@ -73,11 +101,71 @@ export function FineGrainedCache({
   keyPrefix?: string;
   memoryCache?: MemoryCache<unknown>;
   onError?: (err: unknown) => void;
+  /**
+   * Enable event logging
+   */
+  logEvents?: {
+    log: (args: LogEventArgs) => void;
+
+    events: LoggedEvents;
+  };
+  /**
+   * Set a maximum amount of milliseconds for getCached to wait for the GET redis response
+   */
+  GETRedisTimeout?: number;
+  /**
+   * Enable usage of redis pipelines for redis GET.
+   *
+   * If "number" is specified, that's the maximum amount of operations to be sent in a single pipeline
+   */
+  pipelineRedisGET?: boolean | number;
+  /**
+   * Should `getCached` use memory cache by default?
+   *
+   * It can be overriden on `getCached`
+   *
+   * @default true
+   */
+  defaultUseMemoryCache?: boolean;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
   const defaultRetryLockTime = redLockConfig?.retryLockTime || "250 ms";
   const useRedlockByDefault = redLockConfig?.useByDefault ?? false;
+
+  function getTracing() {
+    const start = performance.now();
+
+    return () => `${(performance.now() - start).toFixed()}ms`;
+  }
+
+  const enabledLogEvents = logEvents?.events;
+
+  const logMessage = logEvents
+    ? function logMessage(code: Events, params: EventParamsObject) {
+        let codeValue = logEvents.events[code];
+
+        if (!codeValue) return;
+
+        if (typeof codeValue !== "string") codeValue = Events[code];
+
+        let paramsString = "";
+
+        for (const key in params) {
+          const value = params[key];
+
+          if (value === undefined) continue;
+
+          paramsString += " " + key + "=" + params[key];
+        }
+
+        logEvents.log({
+          code,
+          message: `[${codeValue}]${paramsString}`,
+          params,
+        });
+      }
+    : () => void 0;
 
   function generateCacheKey(keys: string | [string, ...(string | number)[]]) {
     return (
@@ -87,13 +175,147 @@ export function FineGrainedCache({
     ).toLowerCase();
   }
 
+  let pendingRedisGets: [key: string, promise: DeferredPromise<null | string>][] = [];
+
+  let pendingRedisTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  function pipelinedRedisGet(key: string) {
+    if (pendingRedisTimeout !== undefined) {
+      clearTimeout(pendingRedisTimeout);
+    }
+
+    if (typeof pipelineRedisGET === "number" && pendingRedisGets.length >= pipelineRedisGET) {
+      executePipeline();
+    }
+
+    const promise = createDeferredPromise<null | string>();
+
+    pendingRedisGets.push([key, promise]);
+
+    pendingRedisTimeout = setTimeout(executePipeline);
+
+    return promise.promise;
+
+    async function executePipeline() {
+      pendingRedisTimeout = undefined;
+
+      const size = pendingRedisGets.length;
+      const { promises, commands } = pendingRedisGets.reduce<{
+        promises: {
+          promise: DeferredPromise<string | null>;
+          index: number;
+        }[];
+        commands: ["get", string][];
+      }>(
+        (acc, [key, promise], index) => {
+          acc.promises[index] = {
+            promise,
+            index,
+          };
+
+          acc.commands[index] = ["get", key];
+
+          return acc;
+        },
+        {
+          promises: new Array(size),
+          commands: new Array(size),
+        }
+      );
+
+      const tracing = enabledLogEvents?.PIPELINED_REDIS_GETS ? getTracing() : null;
+
+      pendingRedisGets = [];
+
+      try {
+        const pipeline = redis.pipeline(commands);
+
+        const results = await pipeline.exec();
+
+        if (tracing) {
+          logMessage("PIPELINED_REDIS_GETS", {
+            keys: commands.map(([, key]) => key).join(","),
+            cache:
+              results
+                ?.map(([, result]) => (typeof result === "string" ? "HIT" : "MISS"))
+                .join(",") || "null",
+            size,
+            time: tracing(),
+          });
+        }
+
+        for (const { promise, index } of promises) {
+          const result = results?.[index];
+
+          if (!result) {
+            promise.resolve(null);
+          } else {
+            const [error, value] = result;
+
+            if (error) {
+              promise.reject(error);
+            } else {
+              promise.resolve(typeof value != "string" ? null : value);
+            }
+          }
+        }
+      } catch (err) {
+        for (const { promise } of promises) {
+          promise.reject(err);
+        }
+      }
+    }
+  }
+
   async function getRedisCacheValue<T>(
     key: string,
     useSuperjson: boolean,
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
+    const tracing =
+      enabledLogEvents?.REDIS_GET || enabledLogEvents?.REDIS_GET_TIMED_OUT ? getTracing() : null;
+
+    let timedOut: true | undefined = undefined;
     try {
-      const redisValue = await redis.get(key);
+      const redisGet = pipelineRedisGET
+        ? pipelinedRedisGet(key)
+        : redis.get(key).then(
+            (value) => {
+              if (enabledLogEvents?.REDIS_GET) {
+                logMessage("REDIS_GET", {
+                  key,
+                  cache: value == null ? "MISS" : "HIT",
+                  timedOut,
+                  time: tracing?.(),
+                });
+              }
+
+              return value;
+            },
+            (err) => {
+              onError(err);
+
+              return null;
+            }
+          );
+
+      const redisValue = await (GETRedisTimeout != null
+        ? Promise.race([redisGet, timersSetTimeout(GETRedisTimeout, undefined)])
+        : redisGet);
+
+      if (redisValue === undefined) {
+        timedOut = true;
+
+        if (enabledLogEvents?.REDIS_GET_TIMED_OUT) {
+          logMessage("REDIS_GET_TIMED_OUT", {
+            key,
+            timeout: GETRedisTimeout,
+            time: tracing?.(),
+          });
+        }
+
+        return NotFoundSymbol;
+      }
 
       if (redisValue != null) {
         const parsedRedisValue = useSuperjson
@@ -120,8 +342,7 @@ export function FineGrainedCache({
       keys,
       maxExpectedTime = defaultMaxExpectedTime,
       retryLockTime = defaultRetryLockTime,
-      // Don't use memory cache for time-specific invalidations
-      checkShortMemoryCache = timedInvalidation == null,
+      checkShortMemoryCache = defaultUseMemoryCache,
       useSuperjson = true,
       useRedlock = useRedlockByDefault,
       forceUpdate = false,
@@ -153,11 +374,24 @@ export function FineGrainedCache({
       forceUpdate?: boolean;
     }
   ): Awaited<T> | Promise<Awaited<T>> {
+    // Don't use memory cache for time-specific invalidations
+    if (checkShortMemoryCache && timedInvalidation != null) {
+      checkShortMemoryCache = false;
+    }
+
     const key = generateCacheKey(keys);
 
     // Check the in-memory cache
     if (checkShortMemoryCache && forceUpdate === false) {
-      if (memoryCache.has(key)) return memoryCache.get(key) as Awaited<T>;
+      if (memoryCache.has(key)) {
+        if (enabledLogEvents?.MEMORY_CACHE_HIT) {
+          logMessage("MEMORY_CACHE_HIT", {
+            key,
+          });
+        }
+
+        return memoryCache.get(key) as Awaited<T>;
+      }
     }
 
     // Multiple concurrent calls with the same key should re-use the same promise
@@ -180,11 +414,21 @@ export function FineGrainedCache({
         const retryCount = Math.round((maxLockTime / retryDelay) * 2);
 
         try {
+          const tracing = enabledLogEvents?.REDLOCK_ACQUIRED ? getTracing() : null;
+
           // Acquire a lock to prevent this function being called at the same time by more than a single instance
           lock = await redLock.acquire(["lock:" + key], maxLockTime, {
             retryCount,
             retryDelay,
           } as Settings);
+
+          if (tracing) {
+            logMessage("REDLOCK_ACQUIRED", {
+              key,
+              attempts: lock.attempts.length,
+              time: tracing(),
+            });
+          }
         } catch (err) {
           // If acquiring the lock fails, fallback into executing the callback
           onError(err);
@@ -194,20 +438,44 @@ export function FineGrainedCache({
       try {
         // If it took more than 1 attempt to get the lock, check if the value in redis has been set
         if (lock && lock.attempts.length > 1) {
-          // Release the lock for other readers
-          lock
-            .release()
-            // Errors while releasing the lock don't matter
-            .catch(() => null)
-            .finally(() => (lock = null));
+          {
+            const tracing = enabledLogEvents?.REDLOCK_RELEASED ? getTracing() : null;
+            // Release the lock for other readers
+            lock
+              .release()
+              .then(({ attempts }) => {
+                if (tracing) {
+                  logMessage("REDLOCK_RELEASED", {
+                    key,
+                    attempts: attempts.length,
+                    time: tracing(),
+                  });
+                }
+              })
+              // Errors while releasing the lock don't matter
+              .catch(() => null)
+              .finally(() => (lock = null));
+          }
 
-          const redisValueAfterLock = await getRedisCacheValue<Awaited<T>>(
-            key,
-            useSuperjson,
-            checkShortMemoryCache
-          );
+          {
+            const tracing = enabledLogEvents?.REDLOCK_GET_AFTER_ACQUIRE ? getTracing() : null;
 
-          if (redisValueAfterLock !== NotFoundSymbol) return redisValueAfterLock;
+            const redisValueAfterLock = await getRedisCacheValue<Awaited<T>>(
+              key,
+              useSuperjson,
+              checkShortMemoryCache
+            );
+
+            if (tracing) {
+              logMessage("REDLOCK_GET_AFTER_ACQUIRE", {
+                key,
+                cache: redisValueAfterLock !== NotFoundSymbol ? "HIT" : "MISS",
+                time: tracing(),
+              });
+            }
+
+            if (redisValueAfterLock !== NotFoundSymbol) return redisValueAfterLock;
+          }
         }
 
         return await getNewValue();
@@ -221,6 +489,8 @@ export function FineGrainedCache({
         let currentTimedInvalidation: typeof timedInvalidation | null = timedInvalidation;
 
         let expirySeconds: number = 1;
+
+        const tracing = enabledLogEvents?.EXECUTION_TIME ? getTracing() : null;
 
         const newValue = await cb({
           setTTL(options) {
@@ -237,6 +507,13 @@ export function FineGrainedCache({
             };
           },
         });
+
+        if (tracing) {
+          logMessage("EXECUTION_TIME", {
+            key,
+            time: tracing(),
+          });
+        }
 
         try {
           const timedInvalidationDate = currentTimedInvalidation
@@ -258,9 +535,36 @@ export function FineGrainedCache({
             : JSON.stringify(newValue);
 
           if (expirySeconds > 0) {
+            const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
             await redis.setex(key, expirySeconds, stringifiedValue);
+
+            if (tracing) {
+              logMessage("REDIS_SET", {
+                key,
+                expirySeconds,
+                timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                time: tracing(),
+              });
+            }
           } else if (ttl === "Infinity") {
+            const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
             await redis.set(key, stringifiedValue);
+
+            if (tracing) {
+              logMessage("REDIS_SET", {
+                key,
+                expirySeconds: "Infinity",
+                timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                time: tracing(),
+              });
+            }
+          } else if (enabledLogEvents?.REDIS_SKIP_SET) {
+            logMessage("REDIS_SKIP_SET", {
+              key,
+              timedInvalidationDate: timedInvalidationDate?.toISOString(),
+            });
           }
         } catch (err) {
           // If redis/time-invalidation getter fails, report the issue and continue
@@ -281,10 +585,34 @@ export function FineGrainedCache({
 
     const key = generateCacheKey(keys);
 
-    const keysToInvalidate = key.includes("*") ? await redis.keys(key) : [key];
+    let keysToInvalidate: string[];
+
+    if (key.includes("*")) {
+      const tracing = enabledLogEvents?.INVALIDATE_KEY_SCAN ? getTracing() : null;
+      keysToInvalidate = await redis.keys(key);
+      if (tracing) {
+        logMessage("INVALIDATE_KEY_SCAN", {
+          key,
+          keysToInvalidate: keysToInvalidate.join(",") || "null",
+          time: tracing(),
+        });
+      }
+    } else {
+      keysToInvalidate = [key];
+    }
 
     if (keysToInvalidate.length) {
+      const tracing = enabledLogEvents?.INVALIDATED_KEYS ? getTracing() : null;
+
       await redis.del(keysToInvalidate);
+
+      if (tracing) {
+        logMessage("INVALIDATED_KEYS", {
+          key,
+          invalidatedKeys: keysToInvalidate.join(",") || "null",
+          time: tracing(),
+        });
+      }
     }
   }
 
