@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 2.0.1
+
+### Patch Changes
+
+- 82887cf: Never log empty param string, fallback to "null"
+
 ## 2.0.0
 
 ### Major Changes
