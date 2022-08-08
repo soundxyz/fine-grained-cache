@@ -545,18 +545,23 @@ test("pipelined sets", async (t) => {
     ),
   ]);
 
-  t.is(events.length, 5);
+  try {
+    t.is(events.length, 5);
 
-  t.is(events[0].code, "REDIS_GET");
-  t.is(events[1].code, "REDIS_GET");
+    t.is(events[0].code, "REDIS_GET");
+    t.is(events[1].code, "REDIS_GET");
 
-  t.is(events[2].code, "EXECUTION_TIME");
+    t.is(events[2].code, "EXECUTION_TIME");
 
-  t.is(events[3].code, "EXECUTION_TIME");
+    t.is(events[3].code, "EXECUTION_TIME");
 
-  t.is(events[4].code, "PIPELINED_REDIS_SET");
+    t.is(events[4].code, "PIPELINED_REDIS_SET");
 
-  t.is(events[4].params.size, 2);
+    t.is(events[4].params.size, 2);
 
-  t.is(events[4].params.ttl, "300,-1");
+    t.is(events[4].params.ttl, "300,-1");
+  } catch (err) {
+    console.error(err);
+    throw err;
+  }
 });
