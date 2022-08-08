@@ -561,7 +561,7 @@ test("pipelined sets", async (t) => {
 
     t.is(events[4].params.ttl, "300,-1");
   } catch (err) {
-    console.error(err);
+    console.error(events);
     throw err;
   }
 });
