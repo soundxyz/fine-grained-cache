@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 2.1.1
+
+### Patch Changes
+
+- 662d8d1: Fix pipelined set
+
 ## 2.1.0
 
 ### Minor Changes
