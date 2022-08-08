@@ -89,6 +89,7 @@ export function FineGrainedCache({
   pipelineRedisGET,
   pipelineRedisSET,
   defaultUseMemoryCache = true,
+  awaitRedisSet = true,
 }: {
   redis: Redis;
   redLock?: {
@@ -137,6 +138,13 @@ export function FineGrainedCache({
    * @default true
    */
   defaultUseMemoryCache?: boolean;
+
+  /**
+   * Should `getCached` await the Redis set
+   *
+   * @default true
+   */
+  awaitRedisSet?: boolean;
 }) {
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
@@ -650,15 +658,17 @@ export function FineGrainedCache({
 
           if (expirySeconds > 0) {
             if (pipelineRedisSET != null) {
-              pipelinedRedisSet({
+              const set = pipelinedRedisSet({
                 key,
                 value: stringifiedValue,
                 ttl: expirySeconds,
               }).catch(onError);
+
+              if (awaitRedisSet) await set;
             } else {
               const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-              redis
+              const set = redis
                 .setex(key, expirySeconds, stringifiedValue)
                 .then(() => {
                   if (tracing) {
@@ -671,17 +681,21 @@ export function FineGrainedCache({
                   }
                 })
                 .catch(onError);
+
+              if (awaitRedisSet) await set;
             }
           } else if (ttl === "Infinity") {
             if (pipelineRedisSET != null) {
-              pipelinedRedisSet({
+              const set = pipelinedRedisSet({
                 key,
                 value: stringifiedValue,
               }).catch(onError);
+
+              if (awaitRedisSet) await set;
             } else {
               const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-              redis
+              const set = redis
                 .set(key, stringifiedValue)
                 .then(() => {
                   if (tracing) {
@@ -694,6 +708,8 @@ export function FineGrainedCache({
                   }
                 })
                 .catch(onError);
+
+              if (awaitRedisSet) await set;
             }
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
