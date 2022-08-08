@@ -287,7 +287,7 @@ export function FineGrainedCache({
     }
   }
 
-  let pendingRedisSets: { key: string; promise: DeferredPromise<void>; ttl?: number }[] = [];
+  let pendingRedisSets: { key: string; promise: DeferredPromise<void>; value: string; ttl?: number }[] = [];
 
   let pendingRedisSetTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -306,6 +306,7 @@ export function FineGrainedCache({
       key,
       promise,
       ttl,
+      value
     });
 
     pendingRedisSetTimeout = setTimeout(executePipeline);
@@ -328,7 +329,7 @@ export function FineGrainedCache({
           | [cmd: "setex", key: string, ttl: number, value: string]
         >;
       }>(
-        (acc, { key, promise, ttl }, index) => {
+        (acc, { key, promise, ttl, value }, index) => {
           acc.promises[index] = {
             promise,
             index,
