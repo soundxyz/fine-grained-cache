@@ -61,6 +61,7 @@ export const Events = {
   INVALIDATED_KEYS: "INVALIDATED_KEYS",
   EXECUTION_TIME: "EXECUTION_TIME",
   PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
+  PIPELINED_REDIS_SETS: "PIPELINED_REDIS_SETS",
   REDLOCK_ACQUIRED: "REDLOCK_ACQUIRED",
   REDLOCK_RELEASED: "REDLOCK_RELEASED",
   REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
@@ -86,6 +87,7 @@ export function FineGrainedCache({
   logEvents,
   GETRedisTimeout,
   pipelineRedisGET,
+  pipelineRedisSET,
   defaultUseMemoryCache = true,
 }: {
   redis: Redis;
@@ -119,6 +121,14 @@ export function FineGrainedCache({
    * If "number" is specified, that's the maximum amount of operations to be sent in a single pipeline
    */
   pipelineRedisGET?: boolean | number;
+
+  /**
+   * Enable usage of redis pipelines for redis SET.
+   *
+   * If "number" is specified, that's the maximum amount of operations to be sent in a single pipeline
+   */
+  pipelineRedisSET?: boolean | number;
+
   /**
    * Should `getCached` use memory cache by default?
    *
@@ -258,6 +268,108 @@ export function FineGrainedCache({
               promise.reject(error);
             } else {
               promise.resolve(typeof value != "string" ? null : value);
+            }
+          }
+        }
+      } catch (err) {
+        for (const { promise } of promises) {
+          promise.reject(err);
+        }
+      }
+    }
+  }
+
+  let pendingRedisSets: { key: string; promise: DeferredPromise<void>; ttl?: number }[] = [];
+
+  let pendingRedisSetTimeout: ReturnType<typeof setTimeout> | undefined;
+
+  function pipelinedRedisSet({ key, value, ttl }: { key: string; value: string; ttl?: number }) {
+    if (pendingRedisSetTimeout !== undefined) {
+      clearTimeout(pendingRedisSetTimeout);
+    }
+
+    if (typeof pipelineRedisSET === "number" && pendingRedisSets.length >= pipelineRedisSET) {
+      executePipeline();
+    }
+
+    const promise = createDeferredPromise<void>();
+
+    pendingRedisSets.push({
+      key,
+      promise,
+      ttl,
+    });
+
+    pendingRedisSetTimeout = setTimeout(executePipeline);
+
+    return promise.promise;
+
+    async function executePipeline() {
+      pendingRedisSetTimeout = undefined;
+
+      const size = pendingRedisSets.length;
+      const { promises, commands } = pendingRedisSets.reduce<{
+        promises: {
+          promise: DeferredPromise<void>;
+          index: number;
+          key: string;
+          ttl: number | undefined;
+        }[];
+        commands: Array<
+          | [cmd: "set", key: string, value: string]
+          | [cmd: "setex", key: string, ttl: number, value: string]
+        >;
+      }>(
+        (acc, { key, promise, ttl }, index) => {
+          acc.promises[index] = {
+            promise,
+            index,
+            key,
+            ttl,
+          };
+
+          if (ttl != null) {
+            acc.commands[index] = ["setex", key, ttl, value];
+          } else {
+            acc.commands[index] = ["set", key, value];
+          }
+
+          return acc;
+        },
+        {
+          promises: new Array(size),
+          commands: new Array(size),
+        }
+      );
+
+      const tracing = enabledLogEvents?.PIPELINED_REDIS_SETS ? getTracing() : null;
+
+      pendingRedisSets = [];
+
+      try {
+        const pipeline = redis.pipeline(commands);
+
+        const results = await pipeline.exec();
+
+        if (tracing) {
+          logMessage("PIPELINED_REDIS_SETS", {
+            keys: promises.map(({ key }) => key).join(","),
+            ttl: promises.map(({ ttl }) => ttl ?? -1).join(","),
+            size,
+            time: tracing(),
+          });
+        }
+
+        for (const { promise, index } of promises) {
+          const result = results?.[index];
+
+          if (!result) {
+            promise.resolve();
+          } else {
+            if (result[0]) {
+              promise.reject(result[0]);
+            } else {
+              promise.resolve();
             }
           }
         }
@@ -537,30 +649,51 @@ export function FineGrainedCache({
             : JSON.stringify(newValue);
 
           if (expirySeconds > 0) {
-            const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
-
-            await redis.setex(key, expirySeconds, stringifiedValue);
-
-            if (tracing) {
-              logMessage("REDIS_SET", {
+            if (pipelineRedisSET != null) {
+              pipelinedRedisSet({
                 key,
-                expirySeconds,
-                timedInvalidationDate: timedInvalidationDate?.toISOString(),
-                time: tracing(),
-              });
+                value: stringifiedValue,
+                ttl: expirySeconds,
+              }).catch(onError);
+            } else {
+              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
+              redis
+                .setex(key, expirySeconds, stringifiedValue)
+                .then(() => {
+                  if (tracing) {
+                    logMessage("REDIS_SET", {
+                      key,
+                      expirySeconds,
+                      timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                      time: tracing(),
+                    });
+                  }
+                })
+                .catch(onError);
             }
           } else if (ttl === "Infinity") {
-            const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
-
-            await redis.set(key, stringifiedValue);
-
-            if (tracing) {
-              logMessage("REDIS_SET", {
+            if (pipelineRedisSET != null) {
+              pipelinedRedisSet({
                 key,
-                expirySeconds: "Infinity",
-                timedInvalidationDate: timedInvalidationDate?.toISOString(),
-                time: tracing(),
-              });
+                value: stringifiedValue,
+              }).catch(onError);
+            } else {
+              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
+              redis
+                .set(key, stringifiedValue)
+                .then(() => {
+                  if (tracing) {
+                    logMessage("REDIS_SET", {
+                      key,
+                      expirySeconds: "Infinity",
+                      timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                      time: tracing(),
+                    });
+                  }
+                })
+                .catch(onError);
             }
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
