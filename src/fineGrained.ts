@@ -254,12 +254,12 @@ export function FineGrainedCache({
 
         if (tracing) {
           logMessage("PIPELINED_REDIS_GETS", {
+            size,
             keys: commands.map(([, key]) => key).join(","),
             cache:
               results
                 ?.map(([, result]) => (typeof result === "string" ? "HIT" : "MISS"))
                 .join(",") || "null",
-            size,
             time: tracing(),
           });
         }
@@ -361,9 +361,9 @@ export function FineGrainedCache({
 
         if (tracing) {
           logMessage("PIPELINED_REDIS_SETS", {
+            size,
             keys: promises.map(({ key }) => key).join(","),
             ttl: promises.map(({ ttl }) => ttl ?? -1).join(","),
-            size,
             time: tracing(),
           });
         }
