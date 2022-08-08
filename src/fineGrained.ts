@@ -61,7 +61,7 @@ export const Events = {
   INVALIDATED_KEYS: "INVALIDATED_KEYS",
   EXECUTION_TIME: "EXECUTION_TIME",
   PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
-  PIPELINED_REDIS_SETS: "PIPELINED_REDIS_SETS",
+  PIPELINED_REDIS_SET: "PIPELINED_REDIS_SET",
   REDLOCK_ACQUIRED: "REDLOCK_ACQUIRED",
   REDLOCK_RELEASED: "REDLOCK_RELEASED",
   REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
@@ -350,7 +350,7 @@ export function FineGrainedCache({
         }
       );
 
-      const tracing = enabledLogEvents?.PIPELINED_REDIS_SETS ? getTracing() : null;
+      const tracing = enabledLogEvents?.PIPELINED_REDIS_SET ? getTracing() : null;
 
       pendingRedisSets = [];
 
@@ -360,7 +360,7 @@ export function FineGrainedCache({
         const results = await pipeline.exec();
 
         if (tracing) {
-          logMessage("PIPELINED_REDIS_SETS", {
+          logMessage("PIPELINED_REDIS_SET", {
             size,
             keys: promises.map(({ key }) => key).join(","),
             ttl: promises.map(({ ttl }) => ttl ?? -1).join(","),

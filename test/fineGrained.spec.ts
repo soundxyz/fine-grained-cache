@@ -508,3 +508,55 @@ test("pipelined gets", async (t) => {
 
   t.is(events[4].code, "REDIS_SET");
 });
+
+test("pipelined sets", async (t) => {
+  const events: LogEventArgs[] = [];
+
+  const { getCached } = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events.push(args),
+      events: logEverything,
+    },
+    pipelineRedisSET: true,
+    onError: (err) => {
+      throw err;
+    },
+  });
+
+  await Promise.all([
+    getCached(
+      async () => {
+        return 123;
+      },
+      {
+        keys: "test",
+        ttl: "5 minutes",
+      }
+    ),
+    getCached(
+      () => {
+        return 123;
+      },
+      {
+        keys: "test2",
+        ttl: "Infinity",
+      }
+    ),
+  ]);
+
+  t.is(events.length, 5);
+
+  t.is(events[0].code, "REDIS_GET");
+  t.is(events[1].code, "REDIS_GET");
+
+  t.is(events[2].code, "EXECUTION_TIME");
+
+  t.is(events[3].code, "EXECUTION_TIME");
+
+  t.is(events[4].code, "PIPELINED_REDIS_SET");
+
+  t.is(events[4].params.size, 2);
+
+  t.is(events[4].params.ttl, "300,-1");
+});

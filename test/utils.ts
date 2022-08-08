@@ -29,5 +29,5 @@ export const logEverything: Required<LoggedEvents> = {
   REDLOCK_ACQUIRED: true,
   REDLOCK_RELEASED: true,
   REDLOCK_GET_AFTER_ACQUIRE: true,
-  PIPELINED_REDIS_SETS: true,
+  PIPELINED_REDIS_SET: true,
 };
