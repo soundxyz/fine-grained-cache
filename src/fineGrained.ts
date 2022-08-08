@@ -89,7 +89,7 @@ export function FineGrainedCache({
   pipelineRedisGET,
   pipelineRedisSET,
   defaultUseMemoryCache = true,
-  awaitRedisSet = true,
+  awaitRedisSet = process.env.NODE_ENV === "test",
 }: {
   redis: Redis;
   redLock?: {
@@ -142,7 +142,7 @@ export function FineGrainedCache({
   /**
    * Should `getCached` await the Redis set
    *
-   * @default true
+   * @default process.env.NODE_ENV === "test"
    */
   awaitRedisSet?: boolean;
 }) {
