@@ -523,12 +523,13 @@ test("pipelined sets", async (t) => {
     onError: (err) => {
       throw err;
     },
+    defaultUseMemoryCache: false,
   });
 
-  await Promise.all([
+  const valuesOnSet = await Promise.all([
     getCached(
       async () => {
-        return 123;
+        return 111;
       },
       {
         keys: "test",
@@ -537,7 +538,7 @@ test("pipelined sets", async (t) => {
     ),
     getCached(
       () => {
-        return 123;
+        return 222;
       },
       {
         keys: "test2",
@@ -560,4 +561,36 @@ test("pipelined sets", async (t) => {
   t.is(events[4].params.size, 2);
 
   t.is(events[4].params.ttl, "300,-1");
+
+  t.deepEqual(valuesOnSet, [111, 222]);
+
+  const valuesOnGet = await Promise.all([
+    getCached(
+      async () => {
+        return 111;
+      },
+      {
+        keys: "test",
+        ttl: "5 minutes",
+      }
+    ),
+    getCached(
+      () => {
+        return 222;
+      },
+      {
+        keys: "test2",
+        ttl: "Infinity",
+      }
+    ),
+  ]);
+
+  t.is(events.length, 7);
+
+  t.is(events[5].code, "REDIS_GET");
+  t.is(events[5].params.cache, "HIT");
+  t.is(events[6].code, "REDIS_GET");
+  t.is(events[6].params.cache, "HIT");
+
+  t.deepEqual(valuesOnGet, [111, 222]);
 });
