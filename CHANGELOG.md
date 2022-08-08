@@ -1,5 +1,15 @@
 # @soundxyz/fine-grained-cache
 
+## 2.1.0
+
+### Minor Changes
+
+- 4f7b2b9: New "awaitRedisSet" option to allow skipping awaiting the Redis set on getCached logic execution
+
+  Default value is `process.env.NODE_ENV === "test"`
+
+- 4f7b2b9: New "pipelineRedisSET" option to pipeline redis SETs
+
 ## 2.0.1
 
 ### Patch Changes
