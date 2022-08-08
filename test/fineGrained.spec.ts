@@ -3,6 +3,7 @@ import { join } from "path";
 import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
 import { getCached, invalidateCache, logEverything, memoryCache, redis } from "./utils";
 import { createDeferredPromise } from "../src/utils";
+import { setTimeout } from "timers/promises";
 
 test.beforeEach(async () => {
   await redis.flushall();
@@ -18,7 +19,7 @@ test("fine grained - with memory cache", async (t) => {
 
   async function cb() {
     ++calls;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await setTimeout(50);
 
     return "hello world" as const;
   }
@@ -55,7 +56,7 @@ test("fine grained - without memory cache", async (t) => {
 
   async function cb() {
     ++calls;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await setTimeout(50);
 
     return "hello world" as const;
   }
@@ -94,7 +95,7 @@ test("fine grained - without memory cache and invalidate pattern", async (t) => 
 
   async function cb() {
     ++calls;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await setTimeout(50);
 
     return "hello world" as const;
   }
@@ -189,7 +190,7 @@ test("fine grained - timed invalidation", async (t) => {
   async function cb() {
     const data = ++calls;
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setTimeout(10);
 
     return data;
   }
@@ -230,7 +231,7 @@ test("fine grained - timed invalidation", async (t) => {
   t.assert(cacheTtl > 0 && cacheTtl <= 2, "Should use the invalidation date remaining seconds");
 
   // Wait 1 second
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await setTimeout(1000);
 
   t.is((await redis.keys("*")).length, 1);
 
@@ -245,7 +246,7 @@ test("fine grained - timed invalidation", async (t) => {
   t.is(calls, 1);
 
   // Wait 1 second
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await setTimeout(1000);
 
   // Redis should have invalidated correctly
   t.is((await redis.keys("*")).length, 0);
@@ -271,7 +272,7 @@ test("fine grained - forceUpdate", async (t) => {
 
   async function cb() {
     ++calls;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await setTimeout(50);
 
     return "hello world" + calls;
   }
@@ -330,7 +331,7 @@ test("fine grained - dynamic ttl", async (t) => {
 
   const cb: CachedCallback<unknown> = async function cb({ setTTL, getTTL }) {
     ++calls;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await setTimeout(50);
 
     t.deepEqual(getTTL(), {
       ttl: "10 seconds",
@@ -545,23 +546,18 @@ test("pipelined sets", async (t) => {
     ),
   ]);
 
-  try {
-    t.is(events.length, 5);
+  t.is(events.length, 5);
 
-    t.is(events[0].code, "REDIS_GET");
-    t.is(events[1].code, "REDIS_GET");
+  t.is(events[0].code, "REDIS_GET");
+  t.is(events[1].code, "REDIS_GET");
 
-    t.is(events[2].code, "EXECUTION_TIME");
+  t.is(events[2].code, "EXECUTION_TIME");
 
-    t.is(events[3].code, "EXECUTION_TIME");
+  t.is(events[3].code, "EXECUTION_TIME");
 
-    t.is(events[4].code, "PIPELINED_REDIS_SET");
+  t.is(events[4].code, "PIPELINED_REDIS_SET");
 
-    t.is(events[4].params.size, 2);
+  t.is(events[4].params.size, 2);
 
-    t.is(events[4].params.ttl, "300,-1");
-  } catch (err) {
-    console.error(events);
-    throw err;
-  }
+  t.is(events[4].params.ttl, "300,-1");
 });
