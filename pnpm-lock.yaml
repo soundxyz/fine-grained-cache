@@ -8,6 +8,7 @@ specifiers:
   bob-tsm: ^1.0.0
   c8: ^7.11.3
   concurrently: ^7.2.1
+  date-fns: ^2.29.1
   esbuild: ^0.14.42
   execa: ^6.1.0
   ioredis: ^5.0.6
@@ -31,6 +32,7 @@ devDependencies:
   bob-tsm: 1.0.0_infk2je53s6brewk6cjdwjcfzm
   c8: 7.11.3
   concurrently: 7.2.1
+  date-fns: 2.29.1
   esbuild: 0.14.42
   execa: 6.1.0
   ioredis: 5.0.6
@@ -824,7 +826,7 @@ packages:
     hasBin: true
     dependencies:
       chalk: 4.1.2
-      date-fns: 2.28.0
+      date-fns: 2.29.1
       lodash: 4.17.21
       rxjs: 6.6.7
       shell-quote: 1.7.3
@@ -898,8 +900,8 @@ packages:
       array-find-index: 1.0.2
     dev: true
 
-  /date-fns/2.28.0:
-    resolution: {integrity: sha512-8d35hViGYx/QH0icHYCeLmsLmMUheMmTyV9Fcm6gvNwdw31yXXH+O85sOBJ+OLnLQMKZowvpKb6FgMIQjcpvQw==}
+  /date-fns/2.29.1:
+    resolution: {integrity: sha512-dlLD5rKaKxpFdnjrs+5azHDFOPEu4ANy/LTh04A1DTzMM7qoajmKCBc8pkKRFT41CNzw+4gQh79X5C+Jq27HAw==}
     engines: {node: '>=0.11'}
     dev: true
 

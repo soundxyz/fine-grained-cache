@@ -4,6 +4,7 @@ import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
 import { getCached, invalidateCache, logEverything, memoryCache, redis } from "./utils";
 import { createDeferredPromise } from "../src/utils";
 import { setTimeout } from "timers/promises";
+import { addMinutes, minutesToSeconds } from "date-fns";
 
 test.beforeEach(async () => {
   await redis.flushall();
@@ -377,6 +378,42 @@ test("fine grained - dynamic ttl", async (t) => {
 
   t.is(data2, "hello world2");
   t.is(calls, 2);
+});
+
+test("set timed invalidation dynamically", async (t) => {
+  const events: LogEventArgs[] = [];
+  const { getCached } = FineGrainedCache({
+    redis,
+    pipelineRedisGET: true,
+    pipelineRedisSET: true,
+    logEvents: {
+      events: logEverything,
+      log(args) {
+        events.push(args);
+      },
+    },
+  });
+
+  const extraMinutes = 15;
+
+  await getCached(
+    ({ setTTL }) => {
+      setTTL({
+        timedInvalidation: addMinutes(new Date(), extraMinutes),
+      });
+
+      return 123;
+    },
+    {
+      keys: "test-dynamic-timed",
+      ttl: "1 second",
+    }
+  );
+
+  t.is(
+    events.find((event) => event.code === "PIPELINED_REDIS_SET")?.params.ttl,
+    minutesToSeconds(extraMinutes).toString()
+  );
 });
 
 test("logged events", async (t) => {
