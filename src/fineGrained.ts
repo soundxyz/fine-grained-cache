@@ -287,7 +287,12 @@ export function FineGrainedCache({
     }
   }
 
-  let pendingRedisSets: { key: string; promise: DeferredPromise<void>; value: string; ttl?: number }[] = [];
+  let pendingRedisSets: {
+    key: string;
+    promise: DeferredPromise<void>;
+    value: string;
+    ttl?: number;
+  }[] = [];
 
   let pendingRedisSetTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -306,7 +311,7 @@ export function FineGrainedCache({
       key,
       promise,
       ttl,
-      value
+      value,
     });
 
     pendingRedisSetTimeout = setTimeout(executePipeline);
@@ -658,7 +663,7 @@ export function FineGrainedCache({
             : JSON.stringify(newValue);
 
           if (expirySeconds > 0) {
-            if (pipelineRedisSET != null) {
+            if (pipelineRedisSET) {
               const set = pipelinedRedisSet({
                 key,
                 value: stringifiedValue,
@@ -686,7 +691,7 @@ export function FineGrainedCache({
               if (awaitRedisSet) await set;
             }
           } else if (ttl === "Infinity") {
-            if (pipelineRedisSET != null) {
+            if (pipelineRedisSET) {
               const set = pipelinedRedisSet({
                 key,
                 value: stringifiedValue,
