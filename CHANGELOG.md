@@ -1,5 +1,16 @@
 # @soundxyz/fine-grained-cache
 
+## 2.2.0
+
+### Minor Changes
+
+- c4d22cc: logEvents.events accepts custom log functions for specific events
+
+### Patch Changes
+
+- fb9397b: Fix "pipelineRedisSET: false"
+- c4d22cc: logEvents.log is now optional (console.log default fallback)
+
 ## 2.1.1
 
 ### Patch Changes
