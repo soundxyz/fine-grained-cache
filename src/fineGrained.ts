@@ -73,7 +73,13 @@ export type EventParamsObject = Record<string, string | number | boolean | null 
 
 export type LogEventArgs = { message: string; code: Events; params: EventParamsObject };
 
-export type LoggedEvents = Partial<Record<Events, string | boolean | null>>;
+export type LoggedEvents = Partial<
+  Record<Events, string | boolean | null | ((args: LogEventArgs) => void)>
+>;
+
+function defaultLog({ message }: LogEventArgs) {
+  console.log(message);
+}
 
 export function FineGrainedCache({
   redis,
@@ -108,9 +114,12 @@ export function FineGrainedCache({
    * Enable event logging
    */
   logEvents?: {
-    log: (args: LogEventArgs) => void;
-
     events: LoggedEvents;
+
+    /**
+     * @default console.log
+     */
+    log?: (args: LogEventArgs) => void;
   };
   /**
    * Set a maximum amount of milliseconds for getCached to wait for the GET redis response
@@ -161,11 +170,13 @@ export function FineGrainedCache({
 
   const logMessage = logEvents
     ? function logMessage(code: Events, params: EventParamsObject) {
-        let codeValue = logEvents.events[code];
+        const eventValue = logEvents.events[code];
 
-        if (!codeValue) return;
+        if (!eventValue) return;
 
-        if (typeof codeValue !== "string") codeValue = Events[code];
+        const log = typeof eventValue === "function" ? eventValue : logEvents.log || defaultLog;
+
+        const codeMessageValue = typeof eventValue === "string" ? eventValue : code;
 
         let paramsString = "";
 
@@ -179,9 +190,9 @@ export function FineGrainedCache({
           paramsString += " " + key + "=" + value;
         }
 
-        logEvents.log({
+        log({
           code,
-          message: `[${codeValue}]${paramsString}`,
+          message: `[${codeMessageValue}]${paramsString}`,
           params,
         });
       }
