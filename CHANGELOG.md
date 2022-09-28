@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 2.2.1
+
+### Patch Changes
+
+- a617e8b: Improve JSON parse error handling
+
 ## 2.2.0
 
 ### Minor Changes
