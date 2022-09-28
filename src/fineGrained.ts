@@ -457,9 +457,17 @@ export function FineGrainedCache({
       }
 
       if (redisValue != null) {
-        const parsedRedisValue = useSuperjson
-          ? superjson.parse<Awaited<T>>(redisValue)
-          : (JSON.parse(redisValue) as Awaited<T>);
+        let parsedRedisValue: Awaited<T>;
+
+        try {
+          parsedRedisValue = useSuperjson
+            ? superjson.parse<Awaited<T>>(redisValue)
+            : (JSON.parse(redisValue) as Awaited<T>);
+        } catch (err) {
+          onError(new Error(`Unexpected JSON string for ${key}`));
+
+          return NotFoundSymbol;
+        }
 
         if (checkShortMemoryCache) memoryCache.set(key, parsedRedisValue);
 
