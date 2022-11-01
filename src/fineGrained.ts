@@ -792,11 +792,77 @@ export function FineGrainedCache({
     }
   }
 
+  async function setCache({
+    populateMemoryCache = defaultUseMemoryCache,
+    ttl,
+    keys,
+    useSuperjson,
+    value,
+  }: {
+    populateMemoryCache: boolean;
+    ttl: StringValue | "Infinity";
+    keys: string | [string, ...(string | number)[]];
+    useSuperjson: boolean;
+    value: unknown;
+  }) {
+    const key = generateCacheKey(keys);
+
+    const expirySeconds = ttl === "Infinity" ? -1 : getExpirySeconds(ttl);
+
+    const stringifiedValue = useSuperjson ? superjson.stringify(value) : JSON.stringify(value);
+
+    if (expirySeconds > 0) {
+      if (populateMemoryCache) memoryCache.set(key, value);
+
+      if (pipelineRedisSET) {
+        await pipelinedRedisSet({
+          key,
+          value: stringifiedValue,
+          ttl: expirySeconds,
+        });
+      } else {
+        const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
+        await redis.setex(key, expirySeconds, stringifiedValue).then(() => {
+          if (tracing) {
+            logMessage("REDIS_SET", {
+              key,
+              expirySeconds,
+              time: tracing(),
+            });
+          }
+        });
+      }
+    } else if (ttl === "Infinity") {
+      if (populateMemoryCache) memoryCache.set(key, value);
+
+      if (pipelineRedisSET) {
+        await pipelinedRedisSet({
+          key,
+          value: stringifiedValue,
+        });
+      } else {
+        const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
+        await redis.set(key, stringifiedValue).then(() => {
+          if (tracing) {
+            logMessage("REDIS_SET", {
+              key,
+              expirySeconds: "Infinity",
+              time: tracing(),
+            });
+          }
+        });
+      }
+    }
+  }
+
   return {
     getCached,
     generateCacheKey,
     keyPrefix,
     memoryCache,
     invalidateCache,
+    setCache,
   };
 }

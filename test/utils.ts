@@ -5,7 +5,7 @@ export const redis = new Redis({
   port: 6389,
 });
 
-export const { memoryCache, getCached, invalidateCache, generateCacheKey, keyPrefix } =
+export const { memoryCache, getCached, invalidateCache, generateCacheKey, keyPrefix, setCache } =
   FineGrainedCache({
     redis,
     logEvents: {

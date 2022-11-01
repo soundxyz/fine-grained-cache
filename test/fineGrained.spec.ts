@@ -1,7 +1,7 @@
 import test from "ava";
 import { join } from "path";
 import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
-import { getCached, invalidateCache, logEverything, memoryCache, redis } from "./utils";
+import { getCached, invalidateCache, logEverything, memoryCache, redis, setCache } from "./utils";
 import { createDeferredPromise } from "../src/utils";
 import { setTimeout } from "timers/promises";
 import { addMinutes, minutesToSeconds } from "date-fns";
@@ -630,4 +630,91 @@ test("pipelined sets", async (t) => {
   t.is(events[6].params.cache, "HIT");
 
   t.deepEqual(valuesOnGet, [111, 222]);
+});
+
+test("setCache - regular", async (t) => {
+  const keys = "test";
+  const ttl = "10 seconds" as const;
+
+  const value = 123;
+
+  await setCache({
+    keys,
+    ttl,
+    useSuperjson: false,
+    value,
+    populateMemoryCache: false,
+  });
+
+  const data = await getCached<number>(
+    () => {
+      throw Error("Unexpected missing data");
+    },
+    {
+      keys,
+      ttl,
+      useSuperjson: false,
+    }
+  );
+
+  t.is(data, value);
+});
+
+test("setCache - superjson", async (t) => {
+  const keys = "test";
+  const ttl = "10 seconds" as const;
+
+  const value = 456;
+
+  await setCache({
+    keys,
+    ttl,
+    useSuperjson: true,
+    value,
+    populateMemoryCache: false,
+  });
+
+  const data = await getCached<number>(
+    () => {
+      throw Error("Unexpected missing data");
+    },
+    {
+      keys,
+      ttl,
+      useSuperjson: true,
+    }
+  );
+
+  t.is(data, value);
+});
+
+test("setCache - memory cache", async (t) => {
+  const keys = "test";
+  const ttl = "10 seconds" as const;
+
+  const value = 456;
+
+  await setCache({
+    keys,
+    ttl,
+    // On purpose mismatch, memory cache should override
+    useSuperjson: true,
+    value,
+    populateMemoryCache: true,
+  });
+
+  const data = await getCached<number>(
+    () => {
+      throw Error("Unexpected missing data");
+    },
+    {
+      keys,
+      ttl,
+      // On purpose mismatch, memory cache should override
+      useSuperjson: false,
+      checkShortMemoryCache: true,
+    }
+  );
+
+  t.is(data, value);
 });
