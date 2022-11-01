@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 2.3.0
+
+### Minor Changes
+
+- 9741c97: New "setCache" function returned alongside "getCached"
+
 ## 2.2.1
 
 ### Patch Changes
