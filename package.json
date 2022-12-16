@@ -57,7 +57,7 @@
     "ioredis": "^5.2.3",
     "prettier": "^2.7.1",
     "redlock": "5.0.0-beta.2",
-    "typescript": "^4.8.4"
+    "typescript": "^4.9.4"
   },
   "peerDependencies": {
     "ioredis": "^5.0.6",
