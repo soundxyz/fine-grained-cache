@@ -12,7 +12,7 @@ specifiers:
   esbuild: ^0.15.9
   execa: ^6.1.0
   ioredis: ^5.2.3
-  lru-cache: ^7.14.0
+  lru-cache: ^7.14.1
   ms: 3.0.0-canary.1
   prettier: ^2.7.1
   redlock: 5.0.0-beta.2
@@ -20,7 +20,7 @@ specifiers:
   typescript: ^4.8.4
 
 dependencies:
-  lru-cache: 7.14.0
+  lru-cache: 7.14.1
   ms: 3.0.0-canary.1
   superjson: 1.10.0
 
@@ -2002,8 +2002,8 @@ packages:
       yallist: 4.0.0
     dev: true
 
-  /lru-cache/7.14.0:
-    resolution: {integrity: sha512-EIRtP1GrSJny0dqb50QXRUNBxHJhcpxHC++M5tD7RYbvLLn5KVWKsbyswSSqDuU15UFi3bgTQIY8nhDMeF6aDQ==}
+  /lru-cache/7.14.1:
+    resolution: {integrity: sha512-ysxwsnTKdAx96aTRdhDOCQfDgbHnt8SK0KY8SEjO0wHinhWOFTESbjVCMPbU1uGXg/ch4lifqx0wfjOawU2+WA==}
     engines: {node: '>=12'}
     dev: false
 
