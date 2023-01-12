@@ -406,6 +406,19 @@ export function FineGrainedCache({
     }
   }
 
+  let currentTimeout: Promise<undefined> | null = null;
+  function timeoutRedisPromise() {
+    if (currentTimeout) return currentTimeout;
+
+    currentTimeout = timersSetTimeout(GETRedisTimeout, undefined);
+
+    setTimeout(() => {
+      currentTimeout = null;
+    });
+
+    return currentTimeout;
+  }
+
   async function getRedisCacheValue<T>(
     key: string,
     useSuperjson: boolean,
@@ -439,7 +452,7 @@ export function FineGrainedCache({
           );
 
       const redisValue = await (GETRedisTimeout != null
-        ? Promise.race([redisGet, timersSetTimeout(GETRedisTimeout, undefined)])
+        ? Promise.race([redisGet, timeoutRedisPromise()])
         : redisGet);
 
       if (redisValue === undefined) {
