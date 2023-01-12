@@ -407,7 +407,7 @@ export function FineGrainedCache({
   }
 
   let currentTimeout: Promise<undefined> | null = null;
-  async function timeoutRedisPromise() {
+  function timeoutRedisPromise() {
     if (currentTimeout) return currentTimeout;
 
     currentTimeout = timersSetTimeout(GETRedisTimeout, undefined);
