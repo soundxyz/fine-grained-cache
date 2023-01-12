@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 2.3.1
+
+### Patch Changes
+
+- c4904ea: Fix Redis get timeout re-uses promise for calls within the same event cycle
+
 ## 2.3.0
 
 ### Minor Changes
