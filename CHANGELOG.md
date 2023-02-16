@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 2.4.0
+
+### Minor Changes
+
+- c0854d2: New "readCache" that reads directly from redis cache
+
 ## 2.3.1
 
 ### Patch Changes
