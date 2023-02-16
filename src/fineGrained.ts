@@ -888,7 +888,7 @@ export function FineGrainedCache({
       }
 
       return {
-        found: false,
+        found: true,
         value,
       } as const;
     });
