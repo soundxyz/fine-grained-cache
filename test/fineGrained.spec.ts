@@ -1,7 +1,15 @@
 import test from "ava";
 import { join } from "path";
 import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
-import { getCached, invalidateCache, logEverything, memoryCache, redis, setCache } from "./utils";
+import {
+  getCached,
+  invalidateCache,
+  logEverything,
+  memoryCache,
+  readCache,
+  redis,
+  setCache,
+} from "./utils";
 import { createDeferredPromise } from "../src/utils";
 import { setTimeout } from "timers/promises";
 import { addMinutes, minutesToSeconds } from "date-fns";
@@ -636,6 +644,17 @@ test("setCache - regular", async (t) => {
   const keys = "test";
   const ttl = "10 seconds" as const;
 
+  {
+    const cache = await readCache({
+      keys,
+      useSuperjson: false,
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: false,
+    });
+  }
+
   const value = 123;
 
   await setCache({
@@ -658,11 +677,34 @@ test("setCache - regular", async (t) => {
   );
 
   t.is(data, value);
+
+  {
+    const cache = await readCache({
+      keys,
+      useSuperjson: false,
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: true,
+      value,
+    });
+  }
 });
 
 test("setCache - superjson", async (t) => {
   const keys = "test";
   const ttl = "10 seconds" as const;
+
+  {
+    const cache = await readCache({
+      keys,
+      useSuperjson: true,
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: false,
+    });
+  }
 
   const value = 456;
 
@@ -686,6 +728,18 @@ test("setCache - superjson", async (t) => {
   );
 
   t.is(data, value);
+
+  {
+    const cache = await readCache({
+      keys,
+      useSuperjson: true,
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: true,
+      value,
+    });
+  }
 });
 
 test("setCache - memory cache", async (t) => {

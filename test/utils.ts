@@ -5,16 +5,23 @@ export const redis = new Redis({
   port: 6389,
 });
 
-export const { memoryCache, getCached, invalidateCache, generateCacheKey, keyPrefix, setCache } =
-  FineGrainedCache({
-    redis,
-    logEvents: {
-      log: console.log,
-      events: {
-        MEMORY_CACHE_HIT: true,
-      },
+export const {
+  memoryCache,
+  getCached,
+  invalidateCache,
+  generateCacheKey,
+  keyPrefix,
+  setCache,
+  readCache,
+} = FineGrainedCache({
+  redis,
+  logEvents: {
+    log: console.log,
+    events: {
+      MEMORY_CACHE_HIT: true,
     },
-  });
+  },
+});
 
 export const logEverything: Required<LoggedEvents> = {
   EXECUTION_TIME: true,
