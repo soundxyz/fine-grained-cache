@@ -1,7 +1,15 @@
 import test from "ava";
 import { join } from "path";
 import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
-import { getCached, invalidateCache, logEverything, memoryCache, redis, setCache } from "./utils";
+import {
+  getCached,
+  invalidateCache,
+  logEverything,
+  memoryCache,
+  readCache,
+  redis,
+  setCache,
+} from "./utils";
 import { createDeferredPromise } from "../src/utils";
 import { setTimeout } from "timers/promises";
 import { addMinutes, minutesToSeconds } from "date-fns";
@@ -658,6 +666,14 @@ test("setCache - regular", async (t) => {
   );
 
   t.is(data, value);
+
+  t.is(
+    await readCache({
+      keys,
+      useSuperjson: false,
+    }).then((v) => v.value),
+    value
+  );
 });
 
 test("setCache - superjson", async (t) => {
@@ -686,6 +702,14 @@ test("setCache - superjson", async (t) => {
   );
 
   t.is(data, value);
+
+  t.is(
+    await readCache({
+      keys,
+      useSuperjson: true,
+    }).then((v) => v.value),
+    value
+  );
 });
 
 test("setCache - memory cache", async (t) => {
