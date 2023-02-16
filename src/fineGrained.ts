@@ -67,7 +67,7 @@ export const Events = {
   REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
 } as const;
 
-export type Events = typeof Events[keyof typeof Events];
+export type Events = (typeof Events)[keyof typeof Events];
 
 export type EventParamsObject = Record<string, string | number | boolean | null | undefined>;
 
@@ -870,6 +870,30 @@ export function FineGrainedCache({
     }
   }
 
+  function readCache<T>({
+    keys,
+    useSuperjson,
+  }: {
+    keys: string | [string, ...(string | number)[]];
+    useSuperjson: boolean;
+  }) {
+    const key = generateCacheKey(keys);
+
+    return getRedisCacheValue<Awaited<T>>(key, useSuperjson, false).then((value) => {
+      if (value === NotFoundSymbol) {
+        return {
+          found: false,
+          value: undefined,
+        } as const;
+      }
+
+      return {
+        found: false,
+        value,
+      } as const;
+    });
+  }
+
   return {
     getCached,
     generateCacheKey,
@@ -877,5 +901,6 @@ export function FineGrainedCache({
     memoryCache,
     invalidateCache,
     setCache,
+    readCache,
   };
 }
