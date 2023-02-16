@@ -883,7 +883,6 @@ export function FineGrainedCache({
       if (value === NotFoundSymbol) {
         return {
           found: false,
-          value: undefined,
         } as const;
       }
 

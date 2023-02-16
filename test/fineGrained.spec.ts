@@ -644,6 +644,17 @@ test("setCache - regular", async (t) => {
   const keys = "test";
   const ttl = "10 seconds" as const;
 
+  {
+    const cache = await readCache({
+      keys,
+      useSuperjson: false,
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: false,
+    });
+  }
+
   const value = 123;
 
   await setCache({
@@ -667,18 +678,33 @@ test("setCache - regular", async (t) => {
 
   t.is(data, value);
 
-  t.is(
-    await readCache({
+  {
+    const cache = await readCache({
       keys,
       useSuperjson: false,
-    }).then((v) => v.value),
-    value
-  );
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: true,
+      value,
+    });
+  }
 });
 
 test("setCache - superjson", async (t) => {
   const keys = "test";
   const ttl = "10 seconds" as const;
+
+  {
+    const cache = await readCache({
+      keys,
+      useSuperjson: true,
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: false,
+    });
+  }
 
   const value = 456;
 
@@ -703,13 +729,17 @@ test("setCache - superjson", async (t) => {
 
   t.is(data, value);
 
-  t.is(
-    await readCache({
+  {
+    const cache = await readCache({
       keys,
       useSuperjson: true,
-    }).then((v) => v.value),
-    value
-  );
+    });
+
+    t.deepEqual<typeof cache, typeof cache>(cache, {
+      found: true,
+      value,
+    });
+  }
 });
 
 test("setCache - memory cache", async (t) => {
