@@ -805,7 +805,7 @@ export function FineGrainedCache({
     }
   }
 
-  async function setCache({
+  async function setCache<T = unknown>({
     populateMemoryCache = defaultUseMemoryCache,
     ttl,
     keys,
@@ -816,7 +816,7 @@ export function FineGrainedCache({
     ttl: StringValue | "Infinity";
     keys: string | [string, ...(string | number)[]];
     useSuperjson: boolean;
-    value: unknown;
+    value: T;
   }) {
     const key = generateCacheKey(keys);
 
@@ -870,7 +870,7 @@ export function FineGrainedCache({
     }
   }
 
-  function readCache<T>({
+  function readCache<T = unknown>({
     keys,
     useSuperjson,
   }: {
