@@ -421,7 +421,6 @@ export function FineGrainedCache({
 
   async function getRedisCacheValue<T>(
     key: string,
-    useSuperjson: boolean,
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
     const tracing =
@@ -473,9 +472,7 @@ export function FineGrainedCache({
         let parsedRedisValue: Awaited<T>;
 
         try {
-          parsedRedisValue = useSuperjson
-            ? superjson.parse<Awaited<T>>(redisValue)
-            : (JSON.parse(redisValue) as Awaited<T>);
+          parsedRedisValue = superjson.parse<Awaited<T>>(redisValue);
         } catch (err) {
           onError(new Error(`Unexpected JSON string for ${key}`));
 
@@ -503,7 +500,6 @@ export function FineGrainedCache({
       maxExpectedTime = defaultMaxExpectedTime,
       retryLockTime = defaultRetryLockTime,
       checkShortMemoryCache = defaultUseMemoryCache,
-      useSuperjson = true,
       useRedlock = useRedlockByDefault,
       forceUpdate = false,
     }: {
@@ -520,10 +516,6 @@ export function FineGrainedCache({
        * @default true
        */
       checkShortMemoryCache?: boolean;
-      /**
-       * @default true
-       */
-      useSuperjson?: boolean;
       /**
        *  @default false
        */
@@ -558,11 +550,7 @@ export function FineGrainedCache({
     return ConcurrentCachedCall(key, async () => {
       if (forceUpdate) return getNewValue();
 
-      const redisValue = await getRedisCacheValue<Awaited<T>>(
-        key,
-        useSuperjson,
-        checkShortMemoryCache
-      );
+      const redisValue = await getRedisCacheValue<Awaited<T>>(key, checkShortMemoryCache);
 
       if (redisValue !== NotFoundSymbol) return redisValue;
 
@@ -622,7 +610,6 @@ export function FineGrainedCache({
 
             const redisValueAfterLock = await getRedisCacheValue<Awaited<T>>(
               key,
-              useSuperjson,
               checkShortMemoryCache
             );
 
@@ -690,10 +677,7 @@ export function FineGrainedCache({
               ? getRemainingSeconds(timedInvalidationDate)
               : ttlSeconds;
 
-          const stringifiedValue = useSuperjson
-            ? superjson.stringify(newValue)
-            : JSON.stringify(newValue);
-
+          const stringifiedValue = superjson.stringify(newValue);
           if (expirySeconds > 0) {
             if (pipelineRedisSET) {
               const set = pipelinedRedisSet({
@@ -809,20 +793,18 @@ export function FineGrainedCache({
     populateMemoryCache = defaultUseMemoryCache,
     ttl,
     keys,
-    useSuperjson,
     value,
   }: {
     populateMemoryCache: boolean;
     ttl: StringValue | "Infinity";
     keys: string | [string, ...(string | number)[]];
-    useSuperjson: boolean;
     value: T;
   }) {
     const key = generateCacheKey(keys);
 
     const expirySeconds = ttl === "Infinity" ? -1 : getExpirySeconds(ttl);
 
-    const stringifiedValue = useSuperjson ? superjson.stringify(value) : JSON.stringify(value);
+    const stringifiedValue = superjson.stringify(value);
 
     if (expirySeconds > 0) {
       if (populateMemoryCache) memoryCache.set(key, value);
@@ -870,16 +852,10 @@ export function FineGrainedCache({
     }
   }
 
-  function readCache<T = unknown>({
-    keys,
-    useSuperjson,
-  }: {
-    keys: string | [string, ...(string | number)[]];
-    useSuperjson: boolean;
-  }) {
+  function readCache<T = unknown>({ keys }: { keys: string | [string, ...(string | number)[]] }) {
     const key = generateCacheKey(keys);
 
-    return getRedisCacheValue<Awaited<T>>(key, useSuperjson, false).then((value) => {
+    return getRedisCacheValue<Awaited<T>>(key, false).then((value) => {
       if (value === NotFoundSymbol) {
         return {
           found: false,
