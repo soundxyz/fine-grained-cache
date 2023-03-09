@@ -113,7 +113,6 @@ test("fine grained - without memory cache and invalidate pattern", async (t) => 
   const data = await getCached(cb, {
     keys: ["test", 1],
     ttl: "10 seconds",
-    useSuperjson: false,
   });
 
   t.is(data, "hello world");
@@ -123,7 +122,6 @@ test("fine grained - without memory cache and invalidate pattern", async (t) => 
   const data2 = await getCached(cb, {
     keys: ["test", 1],
     ttl: "10 seconds",
-    useSuperjson: false,
   });
 
   t.is(data2, data);
@@ -134,7 +132,6 @@ test("fine grained - without memory cache and invalidate pattern", async (t) => 
   const data3 = await getCached(cb, {
     keys: "test",
     ttl: "10 seconds",
-    useSuperjson: false,
   });
 
   t.is(data3, data);
@@ -647,7 +644,6 @@ test("setCache - regular", async (t) => {
   {
     const cache = await readCache({
       keys,
-      useSuperjson: false,
     });
 
     t.deepEqual<typeof cache, typeof cache>(cache, {
@@ -660,7 +656,6 @@ test("setCache - regular", async (t) => {
   await setCache({
     keys,
     ttl,
-    useSuperjson: false,
     value,
     populateMemoryCache: false,
   });
@@ -672,7 +667,6 @@ test("setCache - regular", async (t) => {
     {
       keys,
       ttl,
-      useSuperjson: false,
     }
   );
 
@@ -681,58 +675,6 @@ test("setCache - regular", async (t) => {
   {
     const cache = await readCache({
       keys,
-      useSuperjson: false,
-    });
-
-    t.deepEqual<typeof cache, typeof cache>(cache, {
-      found: true,
-      value,
-    });
-  }
-});
-
-test("setCache - superjson", async (t) => {
-  const keys = "test";
-  const ttl = "10 seconds" as const;
-
-  {
-    const cache = await readCache({
-      keys,
-      useSuperjson: true,
-    });
-
-    t.deepEqual<typeof cache, typeof cache>(cache, {
-      found: false,
-    });
-  }
-
-  const value = 456;
-
-  await setCache({
-    keys,
-    ttl,
-    useSuperjson: true,
-    value,
-    populateMemoryCache: false,
-  });
-
-  const data = await getCached<number>(
-    () => {
-      throw Error("Unexpected missing data");
-    },
-    {
-      keys,
-      ttl,
-      useSuperjson: true,
-    }
-  );
-
-  t.is(data, value);
-
-  {
-    const cache = await readCache({
-      keys,
-      useSuperjson: true,
     });
 
     t.deepEqual<typeof cache, typeof cache>(cache, {
@@ -751,8 +693,6 @@ test("setCache - memory cache", async (t) => {
   await setCache({
     keys,
     ttl,
-    // On purpose mismatch, memory cache should override
-    useSuperjson: true,
     value,
     populateMemoryCache: true,
   });
@@ -764,8 +704,6 @@ test("setCache - memory cache", async (t) => {
     {
       keys,
       ttl,
-      // On purpose mismatch, memory cache should override
-      useSuperjson: false,
       checkShortMemoryCache: true,
     }
   );
