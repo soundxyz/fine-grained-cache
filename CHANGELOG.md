@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 3.0.0
+
+### Major Changes
+
+- 6120a4a: Remove the ability of turning off superjson
+
 ## 2.4.0
 
 ### Minor Changes
