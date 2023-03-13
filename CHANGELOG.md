@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 3.0.1
+
+### Patch Changes
+
+- fd950d8: When specifying forceUpdate: true, it should await for redis to set
+
 ## 3.0.0
 
 ### Major Changes
