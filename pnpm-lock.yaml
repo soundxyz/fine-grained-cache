@@ -3,7 +3,7 @@ lockfileVersion: 5.4
 specifiers:
   '@changesets/cli': ^2.26.0
   '@types/node': ^18.11.18
-  ava: ^5.1.1
+  ava: ^5.2.0
   bob-ts: ^4.1.1
   bob-tsm: ^1.1.2
   c8: ^7.12.0
@@ -27,7 +27,7 @@ dependencies:
 devDependencies:
   '@changesets/cli': 2.26.0
   '@types/node': 18.11.18
-  ava: 5.1.1
+  ava: 5.2.0
   bob-ts: 4.1.1_nvikhx5wqlynu6sf3salf5m36u
   bob-tsm: 1.1.2_xsjpiiizcdrnzc6stjvl6qcrsi
   c8: 7.12.0
@@ -662,8 +662,8 @@ packages:
     engines: {node: '>=12'}
     dev: true
 
-  /ava/5.1.1:
-    resolution: {integrity: sha512-od1CWgWVIKZSdEc1dhQWhbsd6KBs0EYjek7eqZNGPvy+NyC9Q1bXixcadlgOXwDG9aM0zLMQZwRXfe9gMb1LQQ==}
+  /ava/5.2.0:
+    resolution: {integrity: sha512-W8yxFXJr/P68JP55eMpQIa6AiXhCX3VeuajM8nolyWNExcMDD6rnIWKTjw0B/+GkFHBIaN6Jd0LtcMThcoqVfg==}
     engines: {node: '>=14.19 <15 || >=16.15 <17 || >=18'}
     hasBin: true
     peerDependencies:
