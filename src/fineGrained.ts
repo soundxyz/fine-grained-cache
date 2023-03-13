@@ -686,7 +686,7 @@ export function FineGrainedCache({
                 ttl: expirySeconds,
               }).catch(onError);
 
-              if (awaitRedisSet) await set;
+              if (awaitRedisSet || forceUpdate) await set;
             } else {
               const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
@@ -704,7 +704,7 @@ export function FineGrainedCache({
                 })
                 .catch(onError);
 
-              if (awaitRedisSet) await set;
+              if (awaitRedisSet || forceUpdate) await set;
             }
           } else if (ttl === "Infinity") {
             if (pipelineRedisSET) {
@@ -713,7 +713,7 @@ export function FineGrainedCache({
                 value: stringifiedValue,
               }).catch(onError);
 
-              if (awaitRedisSet) await set;
+              if (awaitRedisSet || forceUpdate) await set;
             } else {
               const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
@@ -731,7 +731,7 @@ export function FineGrainedCache({
                 })
                 .catch(onError);
 
-              if (awaitRedisSet) await set;
+              if (awaitRedisSet || forceUpdate) await set;
             }
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
