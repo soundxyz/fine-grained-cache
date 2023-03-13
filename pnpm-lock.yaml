@@ -17,7 +17,7 @@ specifiers:
   prettier: ^2.8.2
   redlock: 5.0.0-beta.2
   superjson: ^1.12.1
-  typescript: ^4.9.4
+  typescript: ^4.9.5
 
 dependencies:
   lru-cache: 7.14.1
@@ -28,8 +28,8 @@ devDependencies:
   '@changesets/cli': 2.26.0
   '@types/node': 18.11.18
   ava: 5.1.1
-  bob-ts: 4.1.1_nvikhx5wqlynu6sf3salf5m36u
-  bob-tsm: 1.1.2_xsjpiiizcdrnzc6stjvl6qcrsi
+  bob-ts: 4.1.1_cvhla332peq26oe6viumy2qaju
+  bob-tsm: 1.1.2_qsjs6aw4ojjqpak6yfhcql25gm
   c8: 7.12.0
   concurrently: 7.6.0
   date-fns: 2.29.3
@@ -38,7 +38,7 @@ devDependencies:
   ioredis: 5.2.4
   prettier: 2.8.2
   redlock: 5.0.0-beta.2
-  typescript: 4.9.4
+  typescript: 4.9.5
 
 packages:
 
@@ -762,7 +762,7 @@ packages:
       rollup: 2.79.1
     dev: true
 
-  /bob-ts/4.1.1_nvikhx5wqlynu6sf3salf5m36u:
+  /bob-ts/4.1.1_cvhla332peq26oe6viumy2qaju:
     resolution: {integrity: sha512-lXvGGP46GSU10LMHB27Kq2PZl+DaK1L5geHxxzLw/QklEWnvfzLPJsH9YGvV9F4AdIGJp85FTC1xIfanwd3NbQ==}
     engines: {node: '>=14.13.1'}
     hasBin: true
@@ -780,10 +780,10 @@ packages:
       bob-esbuild-plugin: 4.0.0_uiao7appyg7pvh5lt4amcal6cy
       esbuild: 0.16.17
       rollup: 2.79.1
-      typescript: 4.9.4
+      typescript: 4.9.5
     dev: true
 
-  /bob-tsm/1.1.2_xsjpiiizcdrnzc6stjvl6qcrsi:
+  /bob-tsm/1.1.2_qsjs6aw4ojjqpak6yfhcql25gm:
     resolution: {integrity: sha512-5H6wIDpQTop5rt/5JRvtssmpiTkIqi1EBkpSy19GfReOed6QoeD+iJIRjNgyiI7ZsX1ogETxgN7KiW5Wx6pUEQ==}
     engines: {node: '>=14.13.1'}
     hasBin: true
@@ -795,7 +795,7 @@ packages:
         optional: true
     dependencies:
       esbuild: 0.16.17
-      typescript: 4.9.4
+      typescript: 4.9.5
     optionalDependencies:
       fsevents: 2.3.2
     dev: true
@@ -2964,8 +2964,8 @@ packages:
       is-typed-array: 1.1.10
     dev: true
 
-  /typescript/4.9.4:
-    resolution: {integrity: sha512-Uz+dTXYzxXXbsFpM86Wh3dKCxrQqUcVMxwU54orwlJjOpO3ao8L7j5lH+dWfTwgCwIuM9GQ2kvVotzYJMXTBZg==}
+  /typescript/4.9.5:
+    resolution: {integrity: sha512-1FXk9E2Hm+QzZQ7z+McJiHL4NW1F2EzMu9Nq9i3zAaGqibafqYwCVU6WyWAuyQRRzOlxou8xZSyXLEN8oKj24g==}
     engines: {node: '>=4.2.0'}
     hasBin: true
     dev: true
