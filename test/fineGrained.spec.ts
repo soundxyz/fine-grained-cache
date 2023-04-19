@@ -923,7 +923,7 @@ test("stale while revalidate with redis pipelining", async (t) => {
   }
 });
 
-test.only("stale while revalidate without redis pipelining", async (t) => {
+test("stale while revalidate without redis pipelining", async (t) => {
   const events: LogEventArgs[] = [];
   const events2: LogEventArgs[] = [];
 
@@ -986,7 +986,7 @@ test.only("stale while revalidate without redis pipelining", async (t) => {
   }
 
   await waitFor(() => {
-    assert.strictEqual(events.length, 3);
+    assert.strictEqual(events.length, 5);
   });
 
   {
@@ -994,7 +994,7 @@ test.only("stale while revalidate without redis pipelining", async (t) => {
 
     t.deepEqual<Array<Events>, Array<Events>>(
       currentEvents.map((v) => v.code),
-      ["REDIS_GET", "REDIS_GET", "EXECUTION_TIME"]
+      ["REDIS_GET", "REDIS_GET", "EXECUTION_TIME", "REDIS_SET", "REDIS_SET"]
     );
   }
 
@@ -1083,7 +1083,7 @@ test.only("stale while revalidate without redis pipelining", async (t) => {
   ]);
 
   await waitFor(() => {
-    assert.strictEqual(events.length, 5);
+    assert.strictEqual(events.length, 7);
 
     assert.strictEqual(events2.length, 3);
   });
@@ -1098,6 +1098,8 @@ test.only("stale while revalidate without redis pipelining", async (t) => {
         "REDIS_GET",
         "STALE_REVALIDATION_CHECK",
         "EXECUTION_TIME",
+        "REDIS_SET",
+        "REDIS_SET",
         "STALE_BACKGROUND_REVALIDATION",
       ]
     );
@@ -1114,7 +1116,10 @@ test.only("stale while revalidate without redis pipelining", async (t) => {
     t.is(currentEvents[2].params.shouldRevalidate, true);
 
     t.is(currentEvents[4].params.key, cacheKey);
-    t.is(currentEvents[4].params.freshKey, freshKey);
+    t.is(currentEvents[5].params.key, freshKey);
+
+    t.is(currentEvents[6].params.key, cacheKey);
+    t.is(currentEvents[6].params.freshKey, freshKey);
   }
 
   {

@@ -783,66 +783,27 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
               : ttlSeconds;
 
           const stringifiedValue = superjson.stringify(newValue);
-          if (expirySeconds > 0) {
-            if (pipelineRedisSET) {
-              const set = setRedisValue({
-                key,
-                value: stringifiedValue,
-                ttl: expirySeconds,
-              }).catch(onError);
+          if (expirySeconds > 0 || ttl === "Infinity") {
+            const tracing = enabledLogEvents?.REDIS_SET && !pipelineRedisSET ? getTracing() : null;
 
-              if (awaitRedisSet || forceUpdate) await set;
-            } else {
-              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
-
-              const set = setRedisValue({
-                key,
-                ttl: expirySeconds,
-                value: stringifiedValue,
+            const set = setRedisValue({
+              key,
+              value: stringifiedValue,
+              ttl: ttl !== "Infinity" ? expirySeconds : undefined,
+            })
+              .then(() => {
+                if (tracing) {
+                  logMessage("REDIS_SET", {
+                    key,
+                    expirySeconds,
+                    timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                    time: tracing(),
+                  });
+                }
               })
-                .then(() => {
-                  if (tracing) {
-                    logMessage("REDIS_SET", {
-                      key,
-                      expirySeconds,
-                      timedInvalidationDate: timedInvalidationDate?.toISOString(),
-                      time: tracing(),
-                    });
-                  }
-                })
-                .catch(onError);
+              .catch(onError);
 
-              if (awaitRedisSet || forceUpdate) await set;
-            }
-          } else if (ttl === "Infinity") {
-            if (pipelineRedisSET) {
-              const set = setRedisValue({
-                key,
-                value: stringifiedValue,
-              }).catch(onError);
-
-              if (awaitRedisSet || forceUpdate) await set;
-            } else {
-              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
-
-              const set = setRedisValue({
-                key,
-                value: stringifiedValue,
-              })
-                .then(() => {
-                  if (tracing) {
-                    logMessage("REDIS_SET", {
-                      key,
-                      expirySeconds: "Infinity",
-                      timedInvalidationDate: timedInvalidationDate?.toISOString(),
-                      time: tracing(),
-                    });
-                  }
-                })
-                .catch(onError);
-
-              if (awaitRedisSet || forceUpdate) await set;
-            }
+            if (awaitRedisSet || forceUpdate) await set;
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
               key,
@@ -890,15 +851,15 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
       forceUpdate?: boolean;
     }
   ): Promise<Awaited<T>> {
-    const key = generateCacheKey(keys);
+    const dataKey = generateCacheKey(keys);
     const freshKey = generateFreshKey(keys);
 
     // Multiple concurrent calls with the same key should re-use the same promise
-    return ConcurrentCachedCall(key, async () => {
+    return ConcurrentCachedCall(dataKey, async () => {
       if (forceUpdate) return getNewValue();
 
       const [redisValue, isStale] = await Promise.all([
-        getRedisCacheValue<Awaited<T>>(key, false),
+        getRedisCacheValue<Awaited<T>>(dataKey, false),
         getRedisValue(freshKey).then((value) => value == null),
       ]);
 
@@ -920,7 +881,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
               if (staleCheckTracing) {
                 logMessage("STALE_REVALIDATION_CHECK", {
-                  key,
+                  key: dataKey,
                   freshKey,
                   time: staleCheckTracing(),
                   shouldRevalidate: instanceOwnsRevalidation,
@@ -933,7 +894,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
               if (staleCheckTracing) {
                 logMessage("STALE_REVALIDATION_CHECK", {
                   error: true,
-                  key,
+                  key: dataKey,
                   freshKey,
                   time: staleCheckTracing(),
                   shouldRevalidate: false,
@@ -956,7 +917,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
                 .then(() => {
                   if (backgroundRevalidationTracing) {
                     logMessage("STALE_BACKGROUND_REVALIDATION", {
-                      key,
+                      key: dataKey,
                       freshKey,
                       time: backgroundRevalidationTracing(),
                     });
@@ -997,7 +958,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
         if (tracing) {
           logMessage("EXECUTION_TIME", {
-            key,
+            key: dataKey,
             time: tracing(),
           });
         }
@@ -1015,24 +976,45 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
           const stringifiedValue = superjson.stringify(newValue);
           if (dataTtlSeconds > 0) {
+            const tracing = enabledLogEvents?.REDIS_SET && !pipelineRedisSET ? getTracing() : null;
             const set = Promise.all([
               setRedisValue({
-                key,
+                key: dataKey,
                 value: stringifiedValue,
                 ttl: dataTtlSeconds !== Infinity ? dataTtlSeconds : undefined,
-              }).catch(onError),
+              })
+                .then(() => {
+                  if (tracing) {
+                    logMessage("REDIS_SET", {
+                      key: dataKey,
+                      expirySeconds: dataTtlSeconds,
+                      time: tracing(),
+                    });
+                  }
+                })
+                .catch(onError),
               revalidationTtlSeconds > 0 &&
                 setRedisValue({
                   key: freshKey,
                   value: freshCacheValue,
                   ttl: revalidationTtlSeconds,
-                }).catch(onError),
+                })
+                  .then(() => {
+                    if (tracing) {
+                      logMessage("REDIS_SET", {
+                        key: freshKey,
+                        expirySeconds: revalidationTtlSeconds,
+                        time: tracing(),
+                      });
+                    }
+                  })
+                  .catch(onError),
             ]);
 
             if (awaitRedisSet || forceUpdate) await set;
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
-              key,
+              key: dataKey,
             });
           }
         } catch (err) {
