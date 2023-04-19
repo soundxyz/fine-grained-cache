@@ -25,18 +25,6 @@ interface MemoryCache<T> {
   clear(): void;
 }
 
-const ConcurrentLoadingCache: Record<string, Promise<unknown>> = {};
-
-function ConcurrentCachedCall<T>(key: string, cb: () => Promise<T>) {
-  const concurrentLoadingValueCache = ConcurrentLoadingCache[key];
-
-  if (concurrentLoadingValueCache) return concurrentLoadingValueCache as Promise<Awaited<T>>;
-
-  return (ConcurrentLoadingCache[key] = cb()).finally(() => {
-    delete ConcurrentLoadingCache[key];
-  }) as Promise<Awaited<T>>;
-}
-
 export type CachedCallback<T> = (options: {
   setTTL(options: {
     /**
@@ -74,6 +62,8 @@ export const Events = {
   EXECUTION_TIME: "EXECUTION_TIME",
   PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
   PIPELINED_REDIS_SET: "PIPELINED_REDIS_SET",
+  STALE_REVALIDATION_CHECK: "STALE_REVALIDATION_CHECK",
+  STALE_BACKGROUND_REVALIDATION: "STALE_BACKGROUND_REVALIDATION",
   REDLOCK_ACQUIRED: "REDLOCK_ACQUIRED",
   REDLOCK_RELEASED: "REDLOCK_RELEASED",
   REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
@@ -167,6 +157,18 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
    */
   awaitRedisSet?: boolean;
 }) {
+  const ConcurrentLoadingCache: Record<string, Promise<unknown>> = {};
+
+  function ConcurrentCachedCall<T>(key: string, cb: () => Promise<T>) {
+    const concurrentLoadingValueCache = ConcurrentLoadingCache[key];
+
+    if (concurrentLoadingValueCache) return concurrentLoadingValueCache as Promise<Awaited<T>>;
+
+    return (ConcurrentLoadingCache[key] = cb()).finally(() => {
+      delete ConcurrentLoadingCache[key];
+    }) as Promise<Awaited<T>>;
+  }
+
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
   const defaultRetryLockTime = redLockConfig?.retryLockTime || "250 ms";
@@ -825,7 +827,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
        */
       forceUpdate?: boolean;
     }
-  ): Awaited<T> | Promise<Awaited<T>> {
+  ): Promise<Awaited<T>> {
     const key = generateCacheKey(keys);
     const freshKey = generateFreshKey(keys);
 
@@ -840,20 +842,62 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
       if (redisValue !== NotFoundSymbol) {
         if (isStale) {
-          const shouldRevalidate = await redis
+          const staleCheckTracing = logEvents?.events.STALE_REVALIDATION_CHECK
+            ? getTracing()
+            : null;
+
+          redis
             // SET NX so that only 1 instance can do the revalidation at a time
             .set(freshKey, freshCacheValue, "EX", getExpirySeconds(ttl), "NX")
-            .then((value) => value == null)
+            .then((value) => {
+              const instanceOwnsRevalidation = value != null;
+
+              if (staleCheckTracing) {
+                logMessage("STALE_REVALIDATION_CHECK", {
+                  key,
+                  freshKey,
+                  time: staleCheckTracing(),
+                  shouldRevalidate: instanceOwnsRevalidation,
+                });
+              }
+
+              return instanceOwnsRevalidation;
+            })
             .catch((err) => {
+              if (staleCheckTracing) {
+                logMessage("STALE_REVALIDATION_CHECK", {
+                  error: true,
+                  key,
+                  freshKey,
+                  time: staleCheckTracing(),
+                  shouldRevalidate: false,
+                });
+              }
+
               onError(err);
 
               // If redis fails, fallback to skip revalidation
               return false;
-            });
+            })
+            .then((shouldRevalidate) => {
+              if (!shouldRevalidate) return;
 
-          if (shouldRevalidate) {
-            getNewValue().catch(onError);
-          }
+              const backgroundRevalidationTracing = logEvents?.events.STALE_BACKGROUND_REVALIDATION
+                ? getTracing()
+                : null;
+
+              getNewValue()
+                .then(() => {
+                  if (backgroundRevalidationTracing) {
+                    logMessage("STALE_BACKGROUND_REVALIDATION", {
+                      key,
+                      freshKey,
+                      time: backgroundRevalidationTracing(),
+                    });
+                  }
+                })
+                .catch(onError);
+            });
         }
 
         return redisValue;

@@ -1,11 +1,12 @@
 import test from "ava";
 import { join } from "path";
-import { CachedCallback, FineGrainedCache, LogEventArgs } from "../src";
+import { CachedCallback, Events, FineGrainedCache, LogEventArgs } from "../src";
 import {
   getCached,
   invalidateCache,
   logEverything,
   memoryCache,
+  pullCurrentValues,
   readCache,
   redis,
   setCache,
@@ -13,6 +14,9 @@ import {
 import { createDeferredPromise } from "../src/utils";
 import { setTimeout } from "timers/promises";
 import { addMinutes, minutesToSeconds } from "date-fns";
+import { StringValue } from "ms";
+import waitFor from "wait-for-expect";
+import assert from "assert";
 
 test.beforeEach(async () => {
   await redis.flushall();
@@ -707,4 +711,195 @@ test("setCache - memory cache", async (t) => {
   );
 
   t.is(data, value);
+});
+
+test.only("stale while revalidate", async (t) => {
+  const events: LogEventArgs[] = [];
+  const events2: LogEventArgs[] = [];
+
+  const {
+    getStaleWhileRevalidate,
+    getRedisValue,
+    clearRedisValues,
+    generateCacheKey,
+    generateFreshKey,
+  } = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events.push(args),
+      events: logEverything,
+    },
+    // Even though we are testing set, to have more deterministic tests we need to pipeline the GETs first
+    pipelineRedisGET: true,
+    pipelineRedisSET: true,
+    onError: (err) => {
+      throw err;
+    },
+    defaultUseMemoryCache: false,
+  });
+
+  const secondInstance = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events2.push(args),
+      events: logEverything,
+    },
+    // Even though we are testing set, to have more deterministic tests we need to pipeline the GETs first
+    pipelineRedisGET: true,
+    pipelineRedisSET: true,
+    onError: (err) => {
+      throw err;
+    },
+    defaultUseMemoryCache: false,
+  });
+
+  const keys = "test";
+  const ttl = "10 seconds" satisfies StringValue;
+
+  const cacheKey = generateCacheKey(keys);
+  const freshKey = generateFreshKey(keys);
+
+  let testInc = 0;
+
+  async function callback() {
+    await setTimeout(200);
+
+    return ++testInc;
+  }
+
+  {
+    const data = await getStaleWhileRevalidate(callback, {
+      ttl,
+      keys,
+    });
+
+    t.is(data, 1);
+  }
+
+  await waitFor(() => {
+    assert.strictEqual(events.length, 3);
+  });
+
+  {
+    const currentEvents = pullCurrentValues(events);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["PIPELINED_REDIS_GETS", "EXECUTION_TIME", "PIPELINED_REDIS_SET"]
+    );
+  }
+
+  t.is(events.length, 0);
+
+  await Promise.all([
+    getStaleWhileRevalidate(callback, {
+      ttl,
+      keys,
+    }).then((data) => {
+      t.is(data, 1);
+    }),
+    secondInstance
+      .getStaleWhileRevalidate(callback, {
+        ttl,
+        keys,
+      })
+      .then((data) => {
+        t.is(data, 1);
+      }),
+  ]);
+
+  {
+    const currentEvents = pullCurrentValues(events);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["PIPELINED_REDIS_GETS"]
+    );
+
+    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+
+    t.is(currentEvents[0].params.cache, "HIT,HIT");
+  }
+
+  {
+    const currentEvents = pullCurrentValues(events2);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["PIPELINED_REDIS_GETS"]
+    );
+
+    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+
+    t.is(currentEvents[0].params.cache, "HIT,HIT");
+  }
+
+  t.is(await getRedisValue(freshKey), "1");
+
+  await clearRedisValues({ keys: freshKey });
+
+  t.is(await getRedisValue(freshKey), null);
+
+  await waitFor(() => {
+    assert.strictEqual(events.length, 2);
+  });
+
+  pullCurrentValues(events);
+
+  t.is(events2.length, 0);
+
+  await Promise.all([
+    getStaleWhileRevalidate(callback, {
+      ttl,
+      keys,
+    }).then((data) => {
+      t.is(data, 1);
+    }),
+    secondInstance
+      .getStaleWhileRevalidate(callback, {
+        ttl,
+        keys,
+      })
+      .then((data) => {
+        t.is(data, 1);
+      }),
+  ]);
+
+  await waitFor(() => {
+    assert.strictEqual(events.length, 5);
+
+    assert.strictEqual(events2.length, 2);
+  });
+
+  {
+    const currentEvents = pullCurrentValues(events);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      [
+        "PIPELINED_REDIS_GETS",
+        "STALE_REVALIDATION_CHECK",
+        "EXECUTION_TIME",
+        "PIPELINED_REDIS_SET",
+        "STALE_BACKGROUND_REVALIDATION",
+      ]
+    );
+
+    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+
+    t.is(currentEvents[0].params.cache, "HIT,MISS");
+  }
+
+  {
+    const currentEvents = pullCurrentValues(events2);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["PIPELINED_REDIS_GETS", "STALE_REVALIDATION_CHECK"]
+    );
+
+    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+
+    t.is(currentEvents[0].params.cache, "HIT,MISS");
+  }
 });

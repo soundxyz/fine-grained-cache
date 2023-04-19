@@ -54,6 +54,9 @@ devDependencies:
   typescript:
     specifier: ^5.0.4
     version: 5.0.4
+  wait-for-expect:
+    specifier: ^3.0.2
+    version: 3.0.2
 
 packages:
 
@@ -3030,6 +3033,10 @@ packages:
     dependencies:
       spdx-correct: 3.2.0
       spdx-expression-parse: 3.0.1
+    dev: true
+
+  /wait-for-expect@3.0.2:
+    resolution: {integrity: sha512-cfS1+DZxuav1aBYbaO/kE06EOS8yRw7qOFoD3XtjTkYvCvh3zUvNST8DXK/nPaeqIzIv3P3kL3lRJn8iwOiSag==}
     dev: true
 
   /wcwidth@1.0.1:

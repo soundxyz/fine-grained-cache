@@ -13,6 +13,7 @@ export const {
   keyPrefix,
   setCache,
   readCache,
+  getStaleWhileRevalidate,
 } = FineGrainedCache({
   redis,
   logEvents: {
@@ -23,7 +24,7 @@ export const {
   },
 });
 
-export const logEverything: Required<LoggedEvents> = {
+export const logEverything = {
   EXECUTION_TIME: true,
   INVALIDATE_KEY_SCAN: true,
   INVALIDATED_KEYS: true,
@@ -37,4 +38,10 @@ export const logEverything: Required<LoggedEvents> = {
   REDLOCK_RELEASED: true,
   REDLOCK_GET_AFTER_ACQUIRE: true,
   PIPELINED_REDIS_SET: true,
-};
+  STALE_BACKGROUND_REVALIDATION: true,
+  STALE_REVALIDATION_CHECK: true,
+} as const satisfies Required<LoggedEvents>;
+
+export function pullCurrentValues<T>(list: T[]) {
+  return list.splice(0, list.length);
+}
