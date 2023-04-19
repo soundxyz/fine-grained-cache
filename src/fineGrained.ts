@@ -834,7 +834,7 @@ export function FineGrainedCache({
         return redisValue;
       }
 
-      return await getNewValue();
+      return getNewValue();
 
       async function getNewValue() {
         let currentTTL: typeof ttl | null = ttl;
