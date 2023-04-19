@@ -218,29 +218,39 @@ export function FineGrainedCache({
     ).toLowerCase();
   }
 
+  function generateFreshCacheKey(keys: string | [string, ...(string | number)[]]) {
+    return (
+      typeof keys === "string"
+        ? keyPrefix + "-fresh:" + keys
+        : keyPrefix + "-fresh:" + keys.join(":").replaceAll("*:", "*").replaceAll(":*", "*")
+    ).toLowerCase();
+  }
+
+  const freshCacheValue = "1";
+
   let pendingRedisGets: [key: string, promise: DeferredPromise<null | string>][] = [];
 
-  let pendingRedisTimeout: ReturnType<typeof setTimeout> | undefined;
+  let pendingRedisGetTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function pipelinedRedisGet(key: string) {
-    if (pendingRedisTimeout !== undefined) {
-      clearTimeout(pendingRedisTimeout);
+    if (pendingRedisGetTimeout !== undefined) {
+      clearTimeout(pendingRedisGetTimeout);
     }
 
     if (typeof pipelineRedisGET === "number" && pendingRedisGets.length >= pipelineRedisGET) {
-      executePipeline();
+      executeGetPipeline();
     }
 
     const promise = createDeferredPromise<null | string>();
 
     pendingRedisGets.push([key, promise]);
 
-    pendingRedisTimeout = setTimeout(executePipeline);
+    pendingRedisGetTimeout = setTimeout(executeGetPipeline);
 
     return promise.promise;
 
-    async function executePipeline() {
-      pendingRedisTimeout = undefined;
+    async function executeGetPipeline() {
+      pendingRedisGetTimeout = undefined;
 
       const size = pendingRedisGets.length;
       const { promises, commands } = pendingRedisGets.reduce<{
@@ -325,7 +335,7 @@ export function FineGrainedCache({
     }
 
     if (typeof pipelineRedisSET === "number" && pendingRedisSets.length >= pipelineRedisSET) {
-      executePipeline();
+      executeSetPipeline();
     }
 
     const promise = createDeferredPromise<void>();
@@ -337,11 +347,11 @@ export function FineGrainedCache({
       value,
     });
 
-    pendingRedisSetTimeout = setTimeout(executePipeline);
+    pendingRedisSetTimeout = setTimeout(executeSetPipeline);
 
     return promise.promise;
 
-    async function executePipeline() {
+    async function executeSetPipeline() {
       pendingRedisSetTimeout = undefined;
 
       const size = pendingRedisSets.length;
@@ -431,10 +441,7 @@ export function FineGrainedCache({
     return currentTimeout;
   }
 
-  async function getRedisCacheValue<T>(
-    key: string,
-    checkShortMemoryCache: boolean
-  ): Promise<T | typeof NotFoundSymbol> {
+  async function getRedisCacheValueRaw(key: string): Promise<string | null> {
     const tracing =
       enabledLogEvents?.REDIS_GET || enabledLogEvents?.REDIS_GET_TIMED_OUT ? getTracing() : null;
 
@@ -477,8 +484,24 @@ export function FineGrainedCache({
           });
         }
 
-        return NotFoundSymbol;
+        return null;
       }
+
+      return redisValue;
+    } catch (err) {
+      // If for some reason redis fails, the execution should continue
+      onError(err);
+
+      return null;
+    }
+  }
+
+  async function getRedisCacheValue<T>(
+    key: string,
+    checkShortMemoryCache: boolean
+  ): Promise<T | typeof NotFoundSymbol> {
+    try {
+      const redisValue = await getRedisCacheValueRaw(key);
 
       if (redisValue != null) {
         let parsedRedisValue: Awaited<T>;
@@ -779,14 +802,37 @@ export function FineGrainedCache({
     }
   ): Awaited<T> | Promise<Awaited<T>> {
     const key = generateCacheKey(keys);
+    const freshKey = generateFreshCacheKey(keys);
 
     // Multiple concurrent calls with the same key should re-use the same promise
     return ConcurrentCachedCall(key, async () => {
       if (forceUpdate) return getNewValue();
 
-      const redisValue = await getRedisCacheValue<Awaited<T>>(key, false);
+      const [redisValue, isStale] = await Promise.all([
+        getRedisCacheValue<Awaited<T>>(key, false),
+        getRedisCacheValueRaw(freshKey).then((value) => value == null),
+      ]);
 
-      if (redisValue !== NotFoundSymbol) return redisValue;
+      if (redisValue !== NotFoundSymbol) {
+        if (isStale) {
+          const shouldRevalidate = await redis
+            // SET NX so that only 1 instance can do the revalidation at a time
+            .set(freshKey, freshCacheValue, "EX", getExpirySeconds(ttl), "NX")
+            .then((value) => value == null)
+            .catch((err) => {
+              onError(err);
+
+              // If redis fails, fallback to skip revalidation
+              return false;
+            });
+
+          if (shouldRevalidate) {
+            getNewValue().catch(onError);
+          }
+        }
+
+        return redisValue;
+      }
 
       return await getNewValue();
 
@@ -822,31 +868,19 @@ export function FineGrainedCache({
 
           const stringifiedValue = superjson.stringify(newValue);
           if (expirySeconds > 0) {
-            if (pipelineRedisSET) {
-              const set = pipelinedRedisSet({
+            const set = Promise.all([
+              pipelinedRedisSet({
                 key,
                 value: stringifiedValue,
-              }).catch(onError);
+              }).catch(onError),
+              pipelinedRedisSet({
+                key: freshKey,
+                value: freshCacheValue,
+                ttl: ttlSeconds,
+              }).catch(onError),
+            ]);
 
-              if (awaitRedisSet || forceUpdate) await set;
-            } else {
-              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
-
-              const set = redis
-                .set(key, stringifiedValue)
-                .then(() => {
-                  if (tracing) {
-                    logMessage("REDIS_SET", {
-                      key,
-                      expirySeconds,
-                      time: tracing(),
-                    });
-                  }
-                })
-                .catch(onError);
-
-              if (awaitRedisSet || forceUpdate) await set;
-            }
+            if (awaitRedisSet || forceUpdate) await set;
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
               key,
