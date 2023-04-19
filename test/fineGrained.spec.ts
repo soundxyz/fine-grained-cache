@@ -589,6 +589,10 @@ test("pipelined sets", async (t) => {
     ),
   ]);
 
+  if (events.length !== 5) {
+    console.error(events);
+  }
+
   t.is(events.length, 5);
 
   t.is(events[0].code, "REDIS_GET");
