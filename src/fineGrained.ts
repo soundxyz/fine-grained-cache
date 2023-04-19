@@ -51,6 +51,18 @@ export type CachedCallback<T> = (options: {
   };
 }) => T;
 
+export type StaleWhileRevalidateCallback<T> = (options: {
+  setTTL(options: {
+    /**
+     * Set TTL to `null` to disable caching
+     */
+    ttl?: StringValue | null;
+  }): void;
+  getTTL(): {
+    ttl: StringValue | null;
+  };
+}) => T;
+
 export const Events = {
   REDIS_GET: "REDIS_GET",
   REDIS_GET_TIMED_OUT: "REDIS_GET_TIMED_OUT",
@@ -751,6 +763,105 @@ export function FineGrainedCache({
     });
   }
 
+  function getStaleWhileRevalidate<T>(
+    cb: StaleWhileRevalidateCallback<T>,
+    {
+      ttl,
+      keys,
+      forceUpdate = false,
+    }: {
+      ttl: StringValue;
+      keys: string | [string, ...(string | number)[]];
+      /**
+       * @default false
+       */
+      forceUpdate?: boolean;
+    }
+  ): Awaited<T> | Promise<Awaited<T>> {
+    const key = generateCacheKey(keys);
+
+    // Multiple concurrent calls with the same key should re-use the same promise
+    return ConcurrentCachedCall(key, async () => {
+      if (forceUpdate) return getNewValue();
+
+      const redisValue = await getRedisCacheValue<Awaited<T>>(key, false);
+
+      if (redisValue !== NotFoundSymbol) return redisValue;
+
+      return await getNewValue();
+
+      async function getNewValue() {
+        let currentTTL: typeof ttl | null = ttl;
+
+        let expirySeconds: number = 1;
+
+        const tracing = enabledLogEvents?.EXECUTION_TIME ? getTracing() : null;
+
+        const newValue = await cb({
+          setTTL(options) {
+            currentTTL = options.ttl !== undefined ? options.ttl : currentTTL;
+          },
+          getTTL() {
+            return {
+              ttl: currentTTL,
+            };
+          },
+        });
+
+        if (tracing) {
+          logMessage("EXECUTION_TIME", {
+            key,
+            time: tracing(),
+          });
+        }
+
+        try {
+          const ttlSeconds = currentTTL == null ? 0 : getExpirySeconds(currentTTL);
+
+          expirySeconds = ttlSeconds;
+
+          const stringifiedValue = superjson.stringify(newValue);
+          if (expirySeconds > 0) {
+            if (pipelineRedisSET) {
+              const set = pipelinedRedisSet({
+                key,
+                value: stringifiedValue,
+              }).catch(onError);
+
+              if (awaitRedisSet || forceUpdate) await set;
+            } else {
+              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+
+              const set = redis
+                .set(key, stringifiedValue)
+                .then(() => {
+                  if (tracing) {
+                    logMessage("REDIS_SET", {
+                      key,
+                      expirySeconds,
+                      time: tracing(),
+                    });
+                  }
+                })
+                .catch(onError);
+
+              if (awaitRedisSet || forceUpdate) await set;
+            }
+          } else if (enabledLogEvents?.REDIS_SKIP_SET) {
+            logMessage("REDIS_SKIP_SET", {
+              key,
+            });
+          }
+        } catch (err) {
+          // If redis/time-invalidation getter fails, report the issue and continue
+          onError(err);
+        }
+
+        return newValue;
+      }
+    });
+  }
+
   async function invalidateCache(...keys: [string, ...(string | number)[]]) {
     // Memory cache is meant to be a short-lived cache anyways
     // And filtering the keys to be cleared is overkill
@@ -871,6 +982,7 @@ export function FineGrainedCache({
 
   return {
     getCached,
+    getStaleWhileRevalidate,
     generateCacheKey,
     keyPrefix,
     memoryCache,
