@@ -561,6 +561,8 @@ test("pipelined sets", async (t) => {
       log: (args) => events.push(args),
       events: logEverything,
     },
+    // Even though we are testing set, to have more deterministic tests we need to pipeline the GETs first
+    pipelineRedisGET: true,
     pipelineRedisSET: true,
     onError: (err) => {
       throw err;
@@ -589,25 +591,18 @@ test("pipelined sets", async (t) => {
     ),
   ]);
 
-  if (events.length !== 5) {
-    console.error(events);
-  }
+  t.is(events.length, 4);
 
-  t.is(events.length, 5);
+  t.is(events[0].code, "PIPELINED_REDIS_GETS");
+  t.is(events[1].code, "EXECUTION_TIME");
 
-  t.is(events[0].code, "REDIS_GET");
+  t.is(events[2].code, "EXECUTION_TIME");
 
-  t.true(events[1].code === "REDIS_GET" || events[1].code === "EXECUTION_TIME");
+  t.is(events[3].code, "PIPELINED_REDIS_SET");
 
-  t.true(events[2].code === "EXECUTION_TIME" || events[2].code === "REDIS_GET");
+  t.is(events[3].params.size, 2);
 
-  t.is(events[3].code, "EXECUTION_TIME");
-
-  t.is(events[4].code, "PIPELINED_REDIS_SET");
-
-  t.is(events[4].params.size, 2);
-
-  t.is(events[4].params.ttl, "300,-1");
+  t.is(events[3].params.ttl, "300,-1");
 
   t.deepEqual(valuesOnSet, [111, 222]);
 
@@ -632,12 +627,10 @@ test("pipelined sets", async (t) => {
     ),
   ]);
 
-  t.is(events.length, 7);
+  t.is(events.length, 5);
 
-  t.is(events[5].code, "REDIS_GET");
-  t.is(events[5].params.cache, "HIT");
-  t.is(events[6].code, "REDIS_GET");
-  t.is(events[6].params.cache, "HIT");
+  t.is(events[4].code, "PIPELINED_REDIS_GETS");
+  t.is(events[4].params.cache, "HIT,HIT");
 
   t.deepEqual(valuesOnGet, [111, 222]);
 });
