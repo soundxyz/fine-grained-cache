@@ -42,12 +42,19 @@ export type CachedCallback<T> = (options: {
 export type StaleWhileRevalidateCallback<T> = (options: {
   setTTL(options: {
     /**
+     * Set TTL to `null` to disable updating revalidation time
+     */
+    revalidationTTL?: StringValue | null;
+
+    /**
      * Set TTL to `null` to disable caching
      */
-    ttl?: StringValue | null;
+    dataTTL?: StringValue | "Infinity" | null;
   }): void;
   getTTL(): {
-    ttl: StringValue | null;
+    revalidationTTL: StringValue | null;
+
+    dataTTL: StringValue | "Infinity" | null;
   };
 }) => T;
 
@@ -816,11 +823,25 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
   function getStaleWhileRevalidate<T>(
     cb: StaleWhileRevalidateCallback<T>,
     {
-      ttl,
+      revalidationTTL,
+      dataTTL = "Infinity",
       keys,
       forceUpdate = false,
     }: {
-      ttl: StringValue;
+      /**
+       * TTL that sets how frequent revalidations are executed
+       */
+      revalidationTTL: StringValue;
+      /**
+       * Expiration of the data
+       * Expected to be long-lived for stale-while-revalidate mechanism to work as expected
+       *
+       * @default "Infinity"
+       */
+      dataTTL?: StringValue | "Infinity";
+      /**
+       * Unique key combination
+       */
       keys: string | [string, ...(string | number)[]];
       /**
        * @default false
@@ -848,7 +869,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
           redis
             // SET NX so that only 1 instance can do the revalidation at a time
-            .set(freshKey, freshCacheValue, "EX", getExpirySeconds(ttl), "NX")
+            .set(freshKey, freshCacheValue, "EX", getExpirySeconds(revalidationTTL), "NX")
             .then((value) => {
               const instanceOwnsRevalidation = value != null;
 
@@ -906,19 +927,25 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
       return getNewValue();
 
       async function getNewValue() {
-        let currentTTL: typeof ttl | null = ttl;
+        let currentRevalidationTTL: typeof revalidationTTL | null = revalidationTTL;
 
-        let expirySeconds: number = 1;
+        let currentDataTTL: typeof dataTTL | null = dataTTL;
 
         const tracing = enabledLogEvents?.EXECUTION_TIME ? getTracing() : null;
 
         const newValue = await cb({
           setTTL(options) {
-            currentTTL = options.ttl !== undefined ? options.ttl : currentTTL;
+            currentRevalidationTTL =
+              options.revalidationTTL !== undefined
+                ? options.revalidationTTL
+                : currentRevalidationTTL;
+
+            currentDataTTL = options.dataTTL !== undefined ? options.dataTTL : currentDataTTL;
           },
           getTTL() {
             return {
-              ttl: currentTTL,
+              revalidationTTL: currentRevalidationTTL,
+              dataTTL: currentDataTTL,
             };
           },
         });
@@ -931,22 +958,30 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
         }
 
         try {
-          const ttlSeconds = currentTTL == null ? 0 : getExpirySeconds(currentTTL);
+          const revalidationTtlSeconds =
+            currentRevalidationTTL == null ? 0 : getExpirySeconds(currentRevalidationTTL);
 
-          expirySeconds = ttlSeconds;
+          const dataTtlSeconds =
+            currentDataTTL == null
+              ? 0
+              : currentDataTTL === "Infinity"
+              ? Infinity
+              : getExpirySeconds(currentDataTTL);
 
           const stringifiedValue = superjson.stringify(newValue);
-          if (expirySeconds > 0) {
+          if (dataTtlSeconds > 0) {
             const set = Promise.all([
-              pipelinedRedisSet({
+              setRedisValue({
                 key,
                 value: stringifiedValue,
+                ttl: dataTtlSeconds !== Infinity ? dataTtlSeconds : undefined,
               }).catch(onError),
-              pipelinedRedisSet({
-                key: freshKey,
-                value: freshCacheValue,
-                ttl: ttlSeconds,
-              }).catch(onError),
+              revalidationTtlSeconds > 0 &&
+                setRedisValue({
+                  key: freshKey,
+                  value: freshCacheValue,
+                  ttl: revalidationTtlSeconds,
+                }).catch(onError),
             ]);
 
             if (awaitRedisSet || forceUpdate) await set;

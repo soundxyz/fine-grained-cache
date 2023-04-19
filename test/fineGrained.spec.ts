@@ -769,7 +769,7 @@ test.only("stale while revalidate", async (t) => {
 
   {
     const data = await getStaleWhileRevalidate(callback, {
-      ttl,
+      revalidationTTL: ttl,
       keys,
     });
 
@@ -793,14 +793,14 @@ test.only("stale while revalidate", async (t) => {
 
   await Promise.all([
     getStaleWhileRevalidate(callback, {
-      ttl,
+      revalidationTTL: ttl,
       keys,
     }).then((data) => {
       t.is(data, 1);
     }),
     secondInstance
       .getStaleWhileRevalidate(callback, {
-        ttl,
+        revalidationTTL: ttl,
         keys,
       })
       .then((data) => {
@@ -850,14 +850,14 @@ test.only("stale while revalidate", async (t) => {
 
   await Promise.all([
     getStaleWhileRevalidate(callback, {
-      ttl,
+      revalidationTTL: ttl,
       keys,
     }).then((data) => {
       t.is(data, 1);
     }),
     secondInstance
       .getStaleWhileRevalidate(callback, {
-        ttl,
+        revalidationTTL: ttl,
         keys,
       })
       .then((data) => {
