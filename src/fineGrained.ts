@@ -93,10 +93,10 @@ function defaultLog({ message }: LogEventArgs) {
   console.log(message);
 }
 
-export function FineGrainedCache({
+export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
   redis,
   redLock: redLockConfig,
-  keyPrefix = "fine-cache-v1",
+  keyPrefix = "fine-cache-v1" as KeyPrefix,
   memoryCache = new LRUCache<string, never>({
     max: 1000,
     ttl: ms("2 seconds"),
@@ -119,7 +119,7 @@ export function FineGrainedCache({
      */
     useByDefault?: boolean;
   };
-  keyPrefix?: string;
+  keyPrefix?: KeyPrefix;
   memoryCache?: MemoryCache<unknown>;
   onError?: (err: unknown) => void;
   /**
@@ -218,11 +218,13 @@ export function FineGrainedCache({
     ).toLowerCase();
   }
 
-  function generateFreshCacheKey(keys: string | [string, ...(string | number)[]]) {
+  const freshKeyPrefix = `${keyPrefix}-fresh` as const;
+
+  function generateFreshKey(keys: string | [string, ...(string | number)[]]) {
     return (
       typeof keys === "string"
-        ? keyPrefix + "-fresh:" + keys
-        : keyPrefix + "-fresh:" + keys.join(":").replaceAll("*:", "*").replaceAll(":*", "*")
+        ? freshKeyPrefix + ":" + keys
+        : freshKeyPrefix + ":" + keys.join(":").replaceAll("*:", "*").replaceAll(":*", "*")
     ).toLowerCase();
   }
 
@@ -441,7 +443,7 @@ export function FineGrainedCache({
     return currentTimeout;
   }
 
-  async function getRedisCacheValueRaw(key: string): Promise<string | null> {
+  async function getRedisValue(key: string): Promise<string | null> {
     const tracing =
       enabledLogEvents?.REDIS_GET || enabledLogEvents?.REDIS_GET_TIMED_OUT ? getTracing() : null;
 
@@ -496,12 +498,30 @@ export function FineGrainedCache({
     }
   }
 
+  function setRedisValue({ key, value, ttl }: { key: string; value: string; ttl?: number }) {
+    if (pipelineRedisSET) {
+      return pipelinedRedisSet({
+        key,
+        value,
+        ttl,
+      });
+    } else if (ttl != null) {
+      return redis.setex(key, ttl, value);
+    } else {
+      return redis.set(key, value);
+    }
+  }
+
+  function clearRedisValues({ keys }: { keys: string | Array<string> }) {
+    return redis.del(Array.isArray(keys) ? keys : [keys]);
+  }
+
   async function getRedisCacheValue<T>(
     key: string,
     checkShortMemoryCache: boolean
   ): Promise<T | typeof NotFoundSymbol> {
     try {
-      const redisValue = await getRedisCacheValueRaw(key);
+      const redisValue = await getRedisValue(key);
 
       if (redisValue != null) {
         let parsedRedisValue: Awaited<T>;
@@ -715,7 +735,7 @@ export function FineGrainedCache({
           const stringifiedValue = superjson.stringify(newValue);
           if (expirySeconds > 0) {
             if (pipelineRedisSET) {
-              const set = pipelinedRedisSet({
+              const set = setRedisValue({
                 key,
                 value: stringifiedValue,
                 ttl: expirySeconds,
@@ -725,8 +745,11 @@ export function FineGrainedCache({
             } else {
               const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-              const set = redis
-                .setex(key, expirySeconds, stringifiedValue)
+              const set = setRedisValue({
+                key,
+                ttl: expirySeconds,
+                value: stringifiedValue,
+              })
                 .then(() => {
                   if (tracing) {
                     logMessage("REDIS_SET", {
@@ -743,7 +766,7 @@ export function FineGrainedCache({
             }
           } else if (ttl === "Infinity") {
             if (pipelineRedisSET) {
-              const set = pipelinedRedisSet({
+              const set = setRedisValue({
                 key,
                 value: stringifiedValue,
               }).catch(onError);
@@ -752,8 +775,10 @@ export function FineGrainedCache({
             } else {
               const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-              const set = redis
-                .set(key, stringifiedValue)
+              const set = setRedisValue({
+                key,
+                value: stringifiedValue,
+              })
                 .then(() => {
                   if (tracing) {
                     logMessage("REDIS_SET", {
@@ -802,7 +827,7 @@ export function FineGrainedCache({
     }
   ): Awaited<T> | Promise<Awaited<T>> {
     const key = generateCacheKey(keys);
-    const freshKey = generateFreshCacheKey(keys);
+    const freshKey = generateFreshKey(keys);
 
     // Multiple concurrent calls with the same key should re-use the same promise
     return ConcurrentCachedCall(key, async () => {
@@ -810,7 +835,7 @@ export function FineGrainedCache({
 
       const [redisValue, isStale] = await Promise.all([
         getRedisCacheValue<Awaited<T>>(key, false),
-        getRedisCacheValueRaw(freshKey).then((value) => value == null),
+        getRedisValue(freshKey).then((value) => value == null),
       ]);
 
       if (redisValue !== NotFoundSymbol) {
@@ -922,7 +947,7 @@ export function FineGrainedCache({
     if (keysToInvalidate.length) {
       const tracing = enabledLogEvents?.INVALIDATED_KEYS ? getTracing() : null;
 
-      await redis.del(keysToInvalidate);
+      await clearRedisValues({ keys: keysToInvalidate });
 
       if (tracing) {
         logMessage("INVALIDATED_KEYS", {
@@ -955,7 +980,7 @@ export function FineGrainedCache({
       if (populateMemoryCache) memoryCache.set(key, value);
 
       if (pipelineRedisSET) {
-        await pipelinedRedisSet({
+        await setRedisValue({
           key,
           value: stringifiedValue,
           ttl: expirySeconds,
@@ -963,7 +988,11 @@ export function FineGrainedCache({
       } else {
         const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-        await redis.setex(key, expirySeconds, stringifiedValue).then(() => {
+        await setRedisValue({
+          key,
+          value: stringifiedValue,
+          ttl: expirySeconds,
+        }).then(() => {
           if (tracing) {
             logMessage("REDIS_SET", {
               key,
@@ -977,14 +1006,14 @@ export function FineGrainedCache({
       if (populateMemoryCache) memoryCache.set(key, value);
 
       if (pipelineRedisSET) {
-        await pipelinedRedisSet({
+        await setRedisValue({
           key,
           value: stringifiedValue,
         });
       } else {
         const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-        await redis.set(key, stringifiedValue).then(() => {
+        await setRedisValue({ key, value: stringifiedValue }).then(() => {
           if (tracing) {
             logMessage("REDIS_SET", {
               key,
@@ -1018,10 +1047,15 @@ export function FineGrainedCache({
     getCached,
     getStaleWhileRevalidate,
     generateCacheKey,
+    generateFreshKey,
     keyPrefix,
+    freshKeyPrefix,
     memoryCache,
     invalidateCache,
     setCache,
     readCache,
+    getRedisValue,
+    setRedisValue,
+    clearRedisValues,
   };
 }
