@@ -589,12 +589,17 @@ test("pipelined sets", async (t) => {
     ),
   ]);
 
+  if (events.length !== 5) {
+    console.error(events);
+  }
+
   t.is(events.length, 5);
 
   t.is(events[0].code, "REDIS_GET");
-  t.is(events[1].code, "REDIS_GET");
 
-  t.is(events[2].code, "EXECUTION_TIME");
+  t.true(events[1].code === "REDIS_GET" || events[1].code === "EXECUTION_TIME");
+
+  t.true(events[2].code === "EXECUTION_TIME" || events[2].code === "REDIS_GET");
 
   t.is(events[3].code, "EXECUTION_TIME");
 

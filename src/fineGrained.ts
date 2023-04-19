@@ -1,5 +1,5 @@
 import type { Redis } from "ioredis";
-import lruCache from "lru-cache";
+import { LRUCache } from "lru-cache";
 import ms, { StringValue } from "ms";
 import type { default as RedLock, Lock, Settings } from "redlock";
 import superjson from "superjson";
@@ -85,7 +85,7 @@ export function FineGrainedCache({
   redis,
   redLock: redLockConfig,
   keyPrefix = "fine-cache-v1",
-  memoryCache = new lruCache<string, unknown>({
+  memoryCache = new LRUCache<string, never>({
     max: 1000,
     ttl: ms("2 seconds"),
   }),
