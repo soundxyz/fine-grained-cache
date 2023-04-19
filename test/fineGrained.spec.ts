@@ -921,6 +921,23 @@ test("stale while revalidate with redis pipelining", async (t) => {
     t.is(currentEvents[2].params.freshKey, freshKey);
     t.is(currentEvents[2].params.shouldRevalidate, false);
   }
+
+  await Promise.all([
+    getStaleWhileRevalidate(callback, {
+      revalidationTTL: ttl,
+      keys,
+    }).then((data) => {
+      t.is(data, 2);
+    }),
+    secondInstance
+      .getStaleWhileRevalidate(callback, {
+        revalidationTTL: ttl,
+        keys,
+      })
+      .then((data) => {
+        t.is(data, 2);
+      }),
+  ]);
 });
 
 test("stale while revalidate without redis pipelining", async (t) => {
@@ -1144,4 +1161,21 @@ test("stale while revalidate without redis pipelining", async (t) => {
     t.is(currentEvents[2].params.freshKey, freshKey);
     t.is(currentEvents[2].params.shouldRevalidate, false);
   }
+
+  await Promise.all([
+    getStaleWhileRevalidate(callback, {
+      revalidationTTL: ttl,
+      keys,
+    }).then((data) => {
+      t.is(data, 2);
+    }),
+    secondInstance
+      .getStaleWhileRevalidate(callback, {
+        revalidationTTL: ttl,
+        keys,
+      })
+      .then((data) => {
+        t.is(data, 2);
+      }),
+  ]);
 });
