@@ -333,14 +333,25 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
   let pendingRedisSets: {
     key: string;
-    promise: DeferredPromise<void>;
+    promise: DeferredPromise<unknown>;
     value: string;
-    ttl?: number;
+    ttl: number | undefined;
+    nx: boolean;
   }[] = [];
 
   let pendingRedisSetTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  function pipelinedRedisSet({ key, value, ttl }: { key: string; value: string; ttl?: number }) {
+  function pipelinedRedisSet({
+    key,
+    value,
+    ttl,
+    nx,
+  }: {
+    key: string;
+    value: string;
+    ttl: number | undefined;
+    nx: boolean;
+  }) {
     if (pendingRedisSetTimeout !== undefined) {
       clearTimeout(pendingRedisSetTimeout);
     }
@@ -349,13 +360,14 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
       executeSetPipeline();
     }
 
-    const promise = createDeferredPromise<void>();
+    const promise = createDeferredPromise<unknown>();
 
     pendingRedisSets.push({
       key,
       promise,
       ttl,
       value,
+      nx,
     });
 
     pendingRedisSetTimeout = setTimeout(executeSetPipeline);
@@ -368,23 +380,35 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
       const size = pendingRedisSets.length;
       const { promises, commands } = pendingRedisSets.reduce<{
         promises: {
-          promise: DeferredPromise<void>;
+          promise: DeferredPromise<unknown>;
           index: number;
           key: string;
           ttl: number | undefined;
         }[];
         commands: Array<
+          | [cmd: "set", key: string, value: string, ex: "EX", ttl: number, nx: "NX"]
+          | [cmd: "set", key: string, value: string, nx: "NX"]
           | [cmd: "set", key: string, value: string]
           | [cmd: "setex", key: string, ttl: number, value: string]
         >;
       }>(
-        (acc, { key, promise, ttl, value }, index) => {
+        (acc, { key, promise, ttl, value, nx }, index) => {
           acc.promises[index] = {
             promise,
             index,
             key,
             ttl,
           };
+
+          if (nx) {
+            if (ttl != null) {
+              acc.commands[index] = ["set", key, value, "EX", ttl, "NX"];
+            } else {
+              acc.commands[index] = ["set", key, value, "NX"];
+            }
+
+            return acc;
+          }
 
           if (ttl != null) {
             acc.commands[index] = ["setex", key, ttl, value];
@@ -422,12 +446,12 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
           const result = results?.[index];
 
           if (!result) {
-            promise.resolve();
+            promise.resolve(null);
           } else {
             if (result[0]) {
               promise.reject(result[0]);
             } else {
-              promise.resolve();
+              promise.resolve(result[1]);
             }
           }
         }
@@ -507,18 +531,35 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
     }
   }
 
-  function setRedisValue({ key, value, ttl }: { key: string; value: string; ttl?: number }) {
+  function setRedisValue({
+    key,
+    value,
+    ttl,
+    nx = false,
+  }: {
+    key: string;
+    value: string;
+    ttl?: number;
+    nx?: boolean;
+  }) {
     if (pipelineRedisSET) {
       return pipelinedRedisSet({
         key,
         value,
         ttl,
+        nx,
       });
-    } else if (ttl != null) {
-      return redis.setex(key, ttl, value);
-    } else {
-      return redis.set(key, value);
     }
+
+    if (nx) {
+      if (ttl != null) return redis.set(key, value, "EX", ttl, "NX");
+
+      return redis.set(key, value, "NX");
+    }
+
+    if (ttl != null) return redis.setex(key, ttl, value);
+
+    return redis.set(key, value);
   }
 
   function clearRedisValues({ keys }: { keys: string | Array<string> }) {
@@ -867,9 +908,13 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
             ? getTracing()
             : null;
 
-          redis
-            // SET NX so that only 1 instance can do the revalidation at a time
-            .set(freshKey, freshCacheValue, "EX", getExpirySeconds(revalidationTTL), "NX")
+          setRedisValue({
+            key: freshKey,
+            value: freshCacheValue,
+            ttl: getExpirySeconds(revalidationTTL),
+            // NX so that only 1 instance can do the revalidation at a time
+            nx: true,
+          })
             .then((value) => {
               const instanceOwnsRevalidation = value != null;
 

@@ -866,9 +866,9 @@ test.only("stale while revalidate", async (t) => {
   ]);
 
   await waitFor(() => {
-    assert.strictEqual(events.length, 5);
+    assert.strictEqual(events.length, 6);
 
-    assert.strictEqual(events2.length, 2);
+    assert.strictEqual(events2.length, 3);
   });
 
   {
@@ -878,6 +878,7 @@ test.only("stale while revalidate", async (t) => {
       currentEvents.map((v) => v.code),
       [
         "PIPELINED_REDIS_GETS",
+        "PIPELINED_REDIS_SET",
         "STALE_REVALIDATION_CHECK",
         "EXECUTION_TIME",
         "PIPELINED_REDIS_SET",
@@ -888,6 +889,19 @@ test.only("stale while revalidate", async (t) => {
     t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
 
     t.is(currentEvents[0].params.cache, "HIT,MISS");
+
+    t.is(currentEvents[1].params.keys, freshKey);
+    t.is(currentEvents[1].params.ttl, "10");
+
+    t.is(currentEvents[2].params.key, cacheKey);
+    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.shouldRevalidate, true);
+
+    t.is(currentEvents[4].params.keys, `${cacheKey},${freshKey}`);
+    t.is(currentEvents[4].params.ttl, "-1,10");
+
+    t.is(currentEvents[5].params.key, cacheKey);
+    t.is(currentEvents[5].params.freshKey, freshKey);
   }
 
   {
@@ -895,11 +909,18 @@ test.only("stale while revalidate", async (t) => {
 
     t.deepEqual<Array<Events>, Array<Events>>(
       currentEvents.map((v) => v.code),
-      ["PIPELINED_REDIS_GETS", "STALE_REVALIDATION_CHECK"]
+      ["PIPELINED_REDIS_GETS", "PIPELINED_REDIS_SET", "STALE_REVALIDATION_CHECK"]
     );
 
     t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
 
     t.is(currentEvents[0].params.cache, "HIT,MISS");
+
+    t.is(currentEvents[1].params.keys, freshKey);
+    t.is(currentEvents[1].params.ttl, "10");
+
+    t.is(currentEvents[2].params.key, cacheKey);
+    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.shouldRevalidate, false);
   }
 });
