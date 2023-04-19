@@ -713,7 +713,7 @@ test("setCache - memory cache", async (t) => {
   t.is(data, value);
 });
 
-test.only("stale while revalidate", async (t) => {
+test("stale while revalidate with redis pipelining", async (t) => {
   const events: LogEventArgs[] = [];
   const events2: LogEventArgs[] = [];
 
@@ -729,7 +729,6 @@ test.only("stale while revalidate", async (t) => {
       log: (args) => events.push(args),
       events: logEverything,
     },
-    // Even though we are testing set, to have more deterministic tests we need to pipeline the GETs first
     pipelineRedisGET: true,
     pipelineRedisSET: true,
     onError: (err) => {
@@ -744,7 +743,6 @@ test.only("stale while revalidate", async (t) => {
       log: (args) => events2.push(args),
       events: logEverything,
     },
-    // Even though we are testing set, to have more deterministic tests we need to pipeline the GETs first
     pipelineRedisGET: true,
     pipelineRedisSET: true,
     onError: (err) => {
@@ -918,6 +916,224 @@ test.only("stale while revalidate", async (t) => {
 
     t.is(currentEvents[1].params.keys, freshKey);
     t.is(currentEvents[1].params.ttl, "10");
+
+    t.is(currentEvents[2].params.key, cacheKey);
+    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.shouldRevalidate, false);
+  }
+});
+
+test.only("stale while revalidate without redis pipelining", async (t) => {
+  const events: LogEventArgs[] = [];
+  const events2: LogEventArgs[] = [];
+
+  const {
+    getStaleWhileRevalidate,
+    getRedisValue,
+    clearRedisValues,
+    generateCacheKey,
+    generateFreshKey,
+  } = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events.push(args),
+      events: logEverything,
+    },
+    pipelineRedisGET: false,
+    pipelineRedisSET: false,
+    onError: (err) => {
+      throw err;
+    },
+    defaultUseMemoryCache: false,
+  });
+
+  const secondInstance = FineGrainedCache({
+    redis,
+    logEvents: {
+      log: (args) => events2.push(args),
+      events: logEverything,
+    },
+    // Even though we are testing set, to have more deterministic tests we need to pipeline the GETs first
+    pipelineRedisGET: false,
+    pipelineRedisSET: false,
+    onError: (err) => {
+      throw err;
+    },
+    defaultUseMemoryCache: false,
+  });
+
+  const keys = "test";
+  const ttl = "10 seconds" satisfies StringValue;
+
+  const cacheKey = generateCacheKey(keys);
+  const freshKey = generateFreshKey(keys);
+
+  let testInc = 0;
+
+  async function callback() {
+    await setTimeout(200);
+
+    return ++testInc;
+  }
+
+  {
+    const data = await getStaleWhileRevalidate(callback, {
+      revalidationTTL: ttl,
+      keys,
+    });
+
+    t.is(data, 1);
+  }
+
+  await waitFor(() => {
+    assert.strictEqual(events.length, 3);
+  });
+
+  {
+    const currentEvents = pullCurrentValues(events);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["REDIS_GET", "REDIS_GET", "EXECUTION_TIME"]
+    );
+  }
+
+  t.is(events.length, 0);
+
+  await Promise.all([
+    getStaleWhileRevalidate(callback, {
+      revalidationTTL: ttl,
+      keys,
+    }).then((data) => {
+      t.is(data, 1);
+    }),
+    secondInstance
+      .getStaleWhileRevalidate(callback, {
+        revalidationTTL: ttl,
+        keys,
+      })
+      .then((data) => {
+        t.is(data, 1);
+      }),
+  ]);
+
+  {
+    const currentEvents = pullCurrentValues(events);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["REDIS_GET", "REDIS_GET"]
+    );
+
+    t.is(currentEvents[0].params.key, cacheKey);
+
+    t.is(currentEvents[0].params.cache, "HIT");
+
+    t.is(currentEvents[1].params.key, freshKey);
+
+    t.is(currentEvents[1].params.cache, "HIT");
+  }
+
+  {
+    const currentEvents = pullCurrentValues(events2);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["REDIS_GET", "REDIS_GET"]
+    );
+
+    t.is(currentEvents[0].params.key, cacheKey);
+
+    t.is(currentEvents[0].params.cache, "HIT");
+
+    t.is(currentEvents[1].params.key, freshKey);
+
+    t.is(currentEvents[1].params.cache, "HIT");
+  }
+
+  t.is(await getRedisValue(freshKey), "1");
+
+  await clearRedisValues({ keys: freshKey });
+
+  t.is(await getRedisValue(freshKey), null);
+
+  await waitFor(() => {
+    assert.strictEqual(events.length, 2);
+  });
+
+  pullCurrentValues(events);
+
+  t.is(events2.length, 0);
+
+  await Promise.all([
+    getStaleWhileRevalidate(callback, {
+      revalidationTTL: ttl,
+      keys,
+    }).then((data) => {
+      t.is(data, 1);
+    }),
+    secondInstance
+      .getStaleWhileRevalidate(callback, {
+        revalidationTTL: ttl,
+        keys,
+      })
+      .then((data) => {
+        t.is(data, 1);
+      }),
+  ]);
+
+  await waitFor(() => {
+    assert.strictEqual(events.length, 5);
+
+    assert.strictEqual(events2.length, 3);
+  });
+
+  {
+    const currentEvents = pullCurrentValues(events);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      [
+        "REDIS_GET",
+        "REDIS_GET",
+        "STALE_REVALIDATION_CHECK",
+        "EXECUTION_TIME",
+        "STALE_BACKGROUND_REVALIDATION",
+      ]
+    );
+
+    t.is(currentEvents[0].params.key, cacheKey);
+
+    t.is(currentEvents[0].params.cache, "HIT");
+
+    t.is(currentEvents[1].params.key, freshKey);
+
+    t.is(currentEvents[1].params.cache, "MISS");
+
+    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.shouldRevalidate, true);
+
+    t.is(currentEvents[4].params.key, cacheKey);
+    t.is(currentEvents[4].params.freshKey, freshKey);
+  }
+
+  {
+    const currentEvents = pullCurrentValues(events2);
+
+    t.deepEqual<Array<Events>, Array<Events>>(
+      currentEvents.map((v) => v.code),
+      ["REDIS_GET", "REDIS_GET", "STALE_REVALIDATION_CHECK"]
+    );
+
+    t.is(currentEvents[0].params.key, cacheKey);
+
+    t.is(currentEvents[0].params.cache, "HIT");
+
+    t.is(currentEvents[1].params.key, freshKey);
+
+    t.is(currentEvents[1].params.cache, "MISS");
+
+    t.is(currentEvents[1].params.key, freshKey);
 
     t.is(currentEvents[2].params.key, cacheKey);
     t.is(currentEvents[2].params.freshKey, freshKey);
