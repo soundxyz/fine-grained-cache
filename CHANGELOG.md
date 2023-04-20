@@ -1,5 +1,16 @@
 # @soundxyz/fine-grained-cache
 
+## 3.1.0
+
+### Minor Changes
+
+- c56e073: New "getStaleWhileRevalidate" function
+
+### Patch Changes
+
+- c56e073: Expose redis interaction functions
+- 94600da: Update lru-cache and superjson
+
 ## 3.0.1
 
 ### Patch Changes
