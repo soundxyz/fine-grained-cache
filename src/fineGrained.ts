@@ -25,18 +25,6 @@ interface MemoryCache<T> {
   clear(): void;
 }
 
-const ConcurrentLoadingCache: Record<string, Promise<unknown>> = {};
-
-function ConcurrentCachedCall<T>(key: string, cb: () => Promise<T>) {
-  const concurrentLoadingValueCache = ConcurrentLoadingCache[key];
-
-  if (concurrentLoadingValueCache) return concurrentLoadingValueCache as Promise<Awaited<T>>;
-
-  return (ConcurrentLoadingCache[key] = cb()).finally(() => {
-    delete ConcurrentLoadingCache[key];
-  }) as Promise<Awaited<T>>;
-}
-
 export type CachedCallback<T> = (options: {
   setTTL(options: {
     /**
@@ -51,6 +39,25 @@ export type CachedCallback<T> = (options: {
   };
 }) => T;
 
+export type StaleWhileRevalidateCallback<T> = (options: {
+  setTTL(options: {
+    /**
+     * Set TTL to `null` to disable updating revalidation time
+     */
+    revalidationTTL?: StringValue | null;
+
+    /**
+     * Set TTL to `null` to disable caching
+     */
+    dataTTL?: StringValue | "Infinity" | null;
+  }): void;
+  getTTL(): {
+    revalidationTTL: StringValue | null;
+
+    dataTTL: StringValue | "Infinity" | null;
+  };
+}) => T;
+
 export const Events = {
   REDIS_GET: "REDIS_GET",
   REDIS_GET_TIMED_OUT: "REDIS_GET_TIMED_OUT",
@@ -62,6 +69,8 @@ export const Events = {
   EXECUTION_TIME: "EXECUTION_TIME",
   PIPELINED_REDIS_GETS: "PIPELINED_REDIS_GETS",
   PIPELINED_REDIS_SET: "PIPELINED_REDIS_SET",
+  STALE_REVALIDATION_CHECK: "STALE_REVALIDATION_CHECK",
+  STALE_BACKGROUND_REVALIDATION: "STALE_BACKGROUND_REVALIDATION",
   REDLOCK_ACQUIRED: "REDLOCK_ACQUIRED",
   REDLOCK_RELEASED: "REDLOCK_RELEASED",
   REDLOCK_GET_AFTER_ACQUIRE: "REDLOCK_GET_AFTER_ACQUIRE",
@@ -81,10 +90,10 @@ function defaultLog({ message }: LogEventArgs) {
   console.log(message);
 }
 
-export function FineGrainedCache({
+export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
   redis,
   redLock: redLockConfig,
-  keyPrefix = "fine-cache-v1",
+  keyPrefix = "fine-cache-v1" as KeyPrefix,
   memoryCache = new LRUCache<string, never>({
     max: 1000,
     ttl: ms("2 seconds"),
@@ -107,7 +116,7 @@ export function FineGrainedCache({
      */
     useByDefault?: boolean;
   };
-  keyPrefix?: string;
+  keyPrefix?: KeyPrefix;
   memoryCache?: MemoryCache<unknown>;
   onError?: (err: unknown) => void;
   /**
@@ -155,6 +164,18 @@ export function FineGrainedCache({
    */
   awaitRedisSet?: boolean;
 }) {
+  const ConcurrentLoadingCache: Record<string, Promise<unknown>> = {};
+
+  function ConcurrentCachedCall<T>(key: string, cb: () => Promise<T>) {
+    const concurrentLoadingValueCache = ConcurrentLoadingCache[key];
+
+    if (concurrentLoadingValueCache) return concurrentLoadingValueCache as Promise<Awaited<T>>;
+
+    return (ConcurrentLoadingCache[key] = cb()).finally(() => {
+      delete ConcurrentLoadingCache[key];
+    }) as Promise<Awaited<T>>;
+  }
+
   const redLock = redLockConfig?.client;
   const defaultMaxExpectedTime = redLockConfig?.maxExpectedTime || "5 seconds";
   const defaultRetryLockTime = redLockConfig?.retryLockTime || "250 ms";
@@ -206,29 +227,41 @@ export function FineGrainedCache({
     ).toLowerCase();
   }
 
+  const swrKeyPrefix = `${keyPrefix}-swr` as const;
+
+  function generateSWRDataKey(keys: string | [string, ...(string | number)[]]) {
+    return (
+      typeof keys === "string"
+        ? swrKeyPrefix + ":" + keys
+        : swrKeyPrefix + ":" + keys.join(":").replaceAll("*:", "*").replaceAll(":*", "*")
+    ).toLowerCase();
+  }
+
+  const swrRevalidationValue = "1";
+
   let pendingRedisGets: [key: string, promise: DeferredPromise<null | string>][] = [];
 
-  let pendingRedisTimeout: ReturnType<typeof setTimeout> | undefined;
+  let pendingRedisGetTimeout: ReturnType<typeof setTimeout> | undefined;
 
   function pipelinedRedisGet(key: string) {
-    if (pendingRedisTimeout !== undefined) {
-      clearTimeout(pendingRedisTimeout);
+    if (pendingRedisGetTimeout !== undefined) {
+      clearTimeout(pendingRedisGetTimeout);
     }
 
     if (typeof pipelineRedisGET === "number" && pendingRedisGets.length >= pipelineRedisGET) {
-      executePipeline();
+      executeGetPipeline();
     }
 
     const promise = createDeferredPromise<null | string>();
 
     pendingRedisGets.push([key, promise]);
 
-    pendingRedisTimeout = setTimeout(executePipeline);
+    pendingRedisGetTimeout = setTimeout(executeGetPipeline);
 
     return promise.promise;
 
-    async function executePipeline() {
-      pendingRedisTimeout = undefined;
+    async function executeGetPipeline() {
+      pendingRedisGetTimeout = undefined;
 
       const size = pendingRedisGets.length;
       const { promises, commands } = pendingRedisGets.reduce<{
@@ -300,58 +333,82 @@ export function FineGrainedCache({
 
   let pendingRedisSets: {
     key: string;
-    promise: DeferredPromise<void>;
+    promise: DeferredPromise<unknown>;
     value: string;
-    ttl?: number;
+    ttl: number | undefined;
+    nx: boolean;
   }[] = [];
 
   let pendingRedisSetTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  function pipelinedRedisSet({ key, value, ttl }: { key: string; value: string; ttl?: number }) {
+  function pipelinedRedisSet({
+    key,
+    value,
+    ttl,
+    nx,
+  }: {
+    key: string;
+    value: string;
+    ttl: number | undefined;
+    nx: boolean;
+  }) {
     if (pendingRedisSetTimeout !== undefined) {
       clearTimeout(pendingRedisSetTimeout);
     }
 
     if (typeof pipelineRedisSET === "number" && pendingRedisSets.length >= pipelineRedisSET) {
-      executePipeline();
+      executeSetPipeline();
     }
 
-    const promise = createDeferredPromise<void>();
+    const promise = createDeferredPromise<unknown>();
 
     pendingRedisSets.push({
       key,
       promise,
       ttl,
       value,
+      nx,
     });
 
-    pendingRedisSetTimeout = setTimeout(executePipeline);
+    pendingRedisSetTimeout = setTimeout(executeSetPipeline);
 
     return promise.promise;
 
-    async function executePipeline() {
+    async function executeSetPipeline() {
       pendingRedisSetTimeout = undefined;
 
       const size = pendingRedisSets.length;
       const { promises, commands } = pendingRedisSets.reduce<{
         promises: {
-          promise: DeferredPromise<void>;
+          promise: DeferredPromise<unknown>;
           index: number;
           key: string;
           ttl: number | undefined;
         }[];
         commands: Array<
+          | [cmd: "set", key: string, value: string, ex: "EX", ttl: number, nx: "NX"]
+          | [cmd: "set", key: string, value: string, nx: "NX"]
           | [cmd: "set", key: string, value: string]
           | [cmd: "setex", key: string, ttl: number, value: string]
         >;
       }>(
-        (acc, { key, promise, ttl, value }, index) => {
+        (acc, { key, promise, ttl, value, nx }, index) => {
           acc.promises[index] = {
             promise,
             index,
             key,
             ttl,
           };
+
+          if (nx) {
+            if (ttl != null) {
+              acc.commands[index] = ["set", key, value, "EX", ttl, "NX"];
+            } else {
+              acc.commands[index] = ["set", key, value, "NX"];
+            }
+
+            return acc;
+          }
 
           if (ttl != null) {
             acc.commands[index] = ["setex", key, ttl, value];
@@ -389,12 +446,12 @@ export function FineGrainedCache({
           const result = results?.[index];
 
           if (!result) {
-            promise.resolve();
+            promise.resolve(null);
           } else {
             if (result[0]) {
               promise.reject(result[0]);
             } else {
-              promise.resolve();
+              promise.resolve(result[1]);
             }
           }
         }
@@ -419,10 +476,7 @@ export function FineGrainedCache({
     return currentTimeout;
   }
 
-  async function getRedisCacheValue<T>(
-    key: string,
-    checkShortMemoryCache: boolean
-  ): Promise<T | typeof NotFoundSymbol> {
+  async function getRedisValue(key: string): Promise<string | null> {
     const tracing =
       enabledLogEvents?.REDIS_GET || enabledLogEvents?.REDIS_GET_TIMED_OUT ? getTracing() : null;
 
@@ -465,8 +519,59 @@ export function FineGrainedCache({
           });
         }
 
-        return NotFoundSymbol;
+        return null;
       }
+
+      return redisValue;
+    } catch (err) {
+      // If for some reason redis fails, the execution should continue
+      onError(err);
+
+      return null;
+    }
+  }
+
+  function setRedisValue({
+    key,
+    value,
+    ttl,
+    nx = false,
+  }: {
+    key: string;
+    value: string;
+    ttl?: number;
+    nx?: boolean;
+  }) {
+    if (pipelineRedisSET) {
+      return pipelinedRedisSet({
+        key,
+        value,
+        ttl,
+        nx,
+      });
+    }
+
+    if (nx) {
+      if (ttl != null) return redis.set(key, value, "EX", ttl, "NX");
+
+      return redis.set(key, value, "NX");
+    }
+
+    if (ttl != null) return redis.setex(key, ttl, value);
+
+    return redis.set(key, value);
+  }
+
+  function clearRedisValues({ keys }: { keys: string | Array<string> }) {
+    return redis.del(Array.isArray(keys) ? keys : [keys]);
+  }
+
+  async function getRedisCacheValue<T>(
+    key: string,
+    checkShortMemoryCache: boolean
+  ): Promise<T | typeof NotFoundSymbol> {
+    try {
+      const redisValue = await getRedisValue(key);
 
       if (redisValue != null) {
         let parsedRedisValue: Awaited<T>;
@@ -678,61 +783,27 @@ export function FineGrainedCache({
               : ttlSeconds;
 
           const stringifiedValue = superjson.stringify(newValue);
-          if (expirySeconds > 0) {
-            if (pipelineRedisSET) {
-              const set = pipelinedRedisSet({
-                key,
-                value: stringifiedValue,
-                ttl: expirySeconds,
-              }).catch(onError);
+          if (expirySeconds > 0 || ttl === "Infinity") {
+            const tracing = enabledLogEvents?.REDIS_SET && !pipelineRedisSET ? getTracing() : null;
 
-              if (awaitRedisSet || forceUpdate) await set;
-            } else {
-              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
+            const set = setRedisValue({
+              key,
+              value: stringifiedValue,
+              ttl: ttl !== "Infinity" ? expirySeconds : undefined,
+            })
+              .then(() => {
+                if (tracing) {
+                  logMessage("REDIS_SET", {
+                    key,
+                    expirySeconds,
+                    timedInvalidationDate: timedInvalidationDate?.toISOString(),
+                    time: tracing(),
+                  });
+                }
+              })
+              .catch(onError);
 
-              const set = redis
-                .setex(key, expirySeconds, stringifiedValue)
-                .then(() => {
-                  if (tracing) {
-                    logMessage("REDIS_SET", {
-                      key,
-                      expirySeconds,
-                      timedInvalidationDate: timedInvalidationDate?.toISOString(),
-                      time: tracing(),
-                    });
-                  }
-                })
-                .catch(onError);
-
-              if (awaitRedisSet || forceUpdate) await set;
-            }
-          } else if (ttl === "Infinity") {
-            if (pipelineRedisSET) {
-              const set = pipelinedRedisSet({
-                key,
-                value: stringifiedValue,
-              }).catch(onError);
-
-              if (awaitRedisSet || forceUpdate) await set;
-            } else {
-              const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
-
-              const set = redis
-                .set(key, stringifiedValue)
-                .then(() => {
-                  if (tracing) {
-                    logMessage("REDIS_SET", {
-                      key,
-                      expirySeconds: "Infinity",
-                      timedInvalidationDate: timedInvalidationDate?.toISOString(),
-                      time: tracing(),
-                    });
-                  }
-                })
-                .catch(onError);
-
-              if (awaitRedisSet || forceUpdate) await set;
-            }
+            if (awaitRedisSet || forceUpdate) await set;
           } else if (enabledLogEvents?.REDIS_SKIP_SET) {
             logMessage("REDIS_SKIP_SET", {
               key,
@@ -745,6 +816,211 @@ export function FineGrainedCache({
         }
 
         if (expirySeconds > 0 && checkShortMemoryCache) memoryCache.set(key, newValue);
+
+        return newValue;
+      }
+    });
+  }
+
+  function getStaleWhileRevalidate<T>(
+    cb: StaleWhileRevalidateCallback<T>,
+    {
+      revalidationTTL,
+      dataTTL = "Infinity",
+      keys,
+      forceUpdate = false,
+    }: {
+      /**
+       * TTL that sets how frequent revalidations are executed
+       */
+      revalidationTTL: StringValue;
+      /**
+       * Expiration of the data
+       * Expected to be long-lived for stale-while-revalidate mechanism to work as expected
+       *
+       * @default "Infinity"
+       */
+      dataTTL?: StringValue | "Infinity";
+      /**
+       * Unique key combination
+       */
+      keys: string | [string, ...(string | number)[]];
+      /**
+       * @default false
+       */
+      forceUpdate?: boolean;
+    }
+  ): Promise<Awaited<T>> {
+    const dataKey = generateSWRDataKey(keys);
+    const revalidationKey = generateCacheKey(keys);
+
+    // Multiple concurrent calls with the same key should re-use the same promise
+    return ConcurrentCachedCall(dataKey, async () => {
+      if (forceUpdate) return getNewValue();
+
+      const [redisValue, isStale] = await Promise.all([
+        getRedisCacheValue<Awaited<T>>(dataKey, false),
+        getRedisValue(revalidationKey).then((value) => value == null),
+      ]);
+
+      if (redisValue !== NotFoundSymbol) {
+        if (isStale) {
+          const staleCheckTracing = logEvents?.events.STALE_REVALIDATION_CHECK
+            ? getTracing()
+            : null;
+
+          setRedisValue({
+            key: revalidationKey,
+            value: swrRevalidationValue,
+            ttl: getExpirySeconds(revalidationTTL),
+            // NX so that only 1 instance can do the revalidation at a time
+            nx: true,
+          })
+            .then((value) => {
+              const instanceOwnsRevalidation = value != null;
+
+              if (staleCheckTracing) {
+                logMessage("STALE_REVALIDATION_CHECK", {
+                  dataKey,
+                  revalidationKey,
+                  time: staleCheckTracing(),
+                  shouldRevalidate: instanceOwnsRevalidation,
+                });
+              }
+
+              return instanceOwnsRevalidation;
+            })
+            .catch((err) => {
+              if (staleCheckTracing) {
+                logMessage("STALE_REVALIDATION_CHECK", {
+                  error: true,
+                  dataKey,
+                  revalidationKey,
+                  time: staleCheckTracing(),
+                  shouldRevalidate: false,
+                });
+              }
+
+              onError(err);
+
+              // If redis fails, fallback to skip revalidation
+              return false;
+            })
+            .then((shouldRevalidate) => {
+              if (!shouldRevalidate) return;
+
+              const backgroundRevalidationTracing = logEvents?.events.STALE_BACKGROUND_REVALIDATION
+                ? getTracing()
+                : null;
+
+              getNewValue()
+                .then(() => {
+                  if (backgroundRevalidationTracing) {
+                    logMessage("STALE_BACKGROUND_REVALIDATION", {
+                      dataKey,
+                      revalidationKey,
+                      time: backgroundRevalidationTracing(),
+                    });
+                  }
+                })
+                .catch(onError);
+            });
+        }
+
+        return redisValue;
+      }
+
+      return getNewValue();
+
+      async function getNewValue() {
+        let currentRevalidationTTL: typeof revalidationTTL | null = revalidationTTL;
+
+        let currentDataTTL: typeof dataTTL | null = dataTTL;
+
+        const tracing = enabledLogEvents?.EXECUTION_TIME ? getTracing() : null;
+
+        const newValue = await cb({
+          setTTL(options) {
+            currentRevalidationTTL =
+              options.revalidationTTL !== undefined
+                ? options.revalidationTTL
+                : currentRevalidationTTL;
+
+            currentDataTTL = options.dataTTL !== undefined ? options.dataTTL : currentDataTTL;
+          },
+          getTTL() {
+            return {
+              revalidationTTL: currentRevalidationTTL,
+              dataTTL: currentDataTTL,
+            };
+          },
+        });
+
+        if (tracing) {
+          logMessage("EXECUTION_TIME", {
+            key: dataKey,
+            time: tracing(),
+          });
+        }
+
+        try {
+          const revalidationTtlSeconds =
+            currentRevalidationTTL == null ? 0 : getExpirySeconds(currentRevalidationTTL);
+
+          const dataTtlSeconds =
+            currentDataTTL == null
+              ? 0
+              : currentDataTTL === "Infinity"
+              ? Infinity
+              : getExpirySeconds(currentDataTTL);
+
+          const stringifiedValue = superjson.stringify(newValue);
+          if (dataTtlSeconds > 0) {
+            const tracing = enabledLogEvents?.REDIS_SET && !pipelineRedisSET ? getTracing() : null;
+            const set = Promise.all([
+              setRedisValue({
+                key: dataKey,
+                value: stringifiedValue,
+                ttl: dataTtlSeconds !== Infinity ? dataTtlSeconds : undefined,
+              })
+                .then(() => {
+                  if (tracing) {
+                    logMessage("REDIS_SET", {
+                      key: dataKey,
+                      expirySeconds: dataTtlSeconds,
+                      time: tracing(),
+                    });
+                  }
+                })
+                .catch(onError),
+              revalidationTtlSeconds > 0 &&
+                setRedisValue({
+                  key: revalidationKey,
+                  value: swrRevalidationValue,
+                  ttl: revalidationTtlSeconds,
+                })
+                  .then(() => {
+                    if (tracing) {
+                      logMessage("REDIS_SET", {
+                        key: revalidationKey,
+                        expirySeconds: revalidationTtlSeconds,
+                        time: tracing(),
+                      });
+                    }
+                  })
+                  .catch(onError),
+            ]);
+
+            if (awaitRedisSet || forceUpdate) await set;
+          } else if (enabledLogEvents?.REDIS_SKIP_SET) {
+            logMessage("REDIS_SKIP_SET", {
+              key: dataKey,
+            });
+          }
+        } catch (err) {
+          // If redis/time-invalidation getter fails, report the issue and continue
+          onError(err);
+        }
 
         return newValue;
       }
@@ -777,7 +1053,7 @@ export function FineGrainedCache({
     if (keysToInvalidate.length) {
       const tracing = enabledLogEvents?.INVALIDATED_KEYS ? getTracing() : null;
 
-      await redis.del(keysToInvalidate);
+      await clearRedisValues({ keys: keysToInvalidate });
 
       if (tracing) {
         logMessage("INVALIDATED_KEYS", {
@@ -794,13 +1070,15 @@ export function FineGrainedCache({
     ttl,
     keys,
     value,
+    swr,
   }: {
     populateMemoryCache: boolean;
     ttl: StringValue | "Infinity";
     keys: string | [string, ...(string | number)[]];
     value: T;
+    swr?: boolean;
   }) {
-    const key = generateCacheKey(keys);
+    const key = swr ? generateSWRDataKey(keys) : generateCacheKey(keys);
 
     const expirySeconds = ttl === "Infinity" ? -1 : getExpirySeconds(ttl);
 
@@ -810,7 +1088,7 @@ export function FineGrainedCache({
       if (populateMemoryCache) memoryCache.set(key, value);
 
       if (pipelineRedisSET) {
-        await pipelinedRedisSet({
+        await setRedisValue({
           key,
           value: stringifiedValue,
           ttl: expirySeconds,
@@ -818,7 +1096,11 @@ export function FineGrainedCache({
       } else {
         const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-        await redis.setex(key, expirySeconds, stringifiedValue).then(() => {
+        await setRedisValue({
+          key,
+          value: stringifiedValue,
+          ttl: expirySeconds,
+        }).then(() => {
           if (tracing) {
             logMessage("REDIS_SET", {
               key,
@@ -832,14 +1114,14 @@ export function FineGrainedCache({
       if (populateMemoryCache) memoryCache.set(key, value);
 
       if (pipelineRedisSET) {
-        await pipelinedRedisSet({
+        await setRedisValue({
           key,
           value: stringifiedValue,
         });
       } else {
         const tracing = enabledLogEvents?.REDIS_SET ? getTracing() : null;
 
-        await redis.set(key, stringifiedValue).then(() => {
+        await setRedisValue({ key, value: stringifiedValue }).then(() => {
           if (tracing) {
             logMessage("REDIS_SET", {
               key,
@@ -852,8 +1134,14 @@ export function FineGrainedCache({
     }
   }
 
-  function readCache<T = unknown>({ keys }: { keys: string | [string, ...(string | number)[]] }) {
-    const key = generateCacheKey(keys);
+  function readCache<T = unknown>({
+    keys,
+    swr,
+  }: {
+    keys: string | [string, ...(string | number)[]];
+    swr?: boolean;
+  }) {
+    const key = swr ? generateSWRDataKey(keys) : generateCacheKey(keys);
 
     return getRedisCacheValue<Awaited<T>>(key, false).then((value) => {
       if (value === NotFoundSymbol) {
@@ -871,11 +1159,17 @@ export function FineGrainedCache({
 
   return {
     getCached,
+    getStaleWhileRevalidate,
     generateCacheKey,
+    generateSWRDataKey,
     keyPrefix,
+    swrKeyPrefix,
     memoryCache,
     invalidateCache,
     setCache,
     readCache,
+    getRedisValue,
+    setRedisValue,
+    clearRedisValues,
   };
 }
