@@ -1070,13 +1070,15 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
     ttl,
     keys,
     value,
+    swr,
   }: {
     populateMemoryCache: boolean;
     ttl: StringValue | "Infinity";
     keys: string | [string, ...(string | number)[]];
     value: T;
+    swr?: boolean;
   }) {
-    const key = generateCacheKey(keys);
+    const key = swr ? generateSWRDataKey(keys) : generateCacheKey(keys);
 
     const expirySeconds = ttl === "Infinity" ? -1 : getExpirySeconds(ttl);
 
@@ -1132,8 +1134,14 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
     }
   }
 
-  function readCache<T = unknown>({ keys }: { keys: string | [string, ...(string | number)[]] }) {
-    const key = generateCacheKey(keys);
+  function readCache<T = unknown>({
+    keys,
+    swr,
+  }: {
+    keys: string | [string, ...(string | number)[]];
+    swr?: boolean;
+  }) {
+    const key = swr ? generateSWRDataKey(keys) : generateCacheKey(keys);
 
     return getRedisCacheValue<Awaited<T>>(key, false).then((value) => {
       if (value === NotFoundSymbol) {
