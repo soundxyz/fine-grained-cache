@@ -227,17 +227,17 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
     ).toLowerCase();
   }
 
-  const freshKeyPrefix = `${keyPrefix}-fresh` as const;
+  const swrKeyPrefix = `${keyPrefix}-swr` as const;
 
-  function generateFreshKey(keys: string | [string, ...(string | number)[]]) {
+  function generateSWRDataKey(keys: string | [string, ...(string | number)[]]) {
     return (
       typeof keys === "string"
-        ? freshKeyPrefix + ":" + keys
-        : freshKeyPrefix + ":" + keys.join(":").replaceAll("*:", "*").replaceAll(":*", "*")
+        ? swrKeyPrefix + ":" + keys
+        : swrKeyPrefix + ":" + keys.join(":").replaceAll("*:", "*").replaceAll(":*", "*")
     ).toLowerCase();
   }
 
-  const freshCacheValue = "1";
+  const swrFlagValue = "OK";
 
   let pendingRedisGets: [key: string, promise: DeferredPromise<null | string>][] = [];
 
@@ -851,8 +851,8 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
       forceUpdate?: boolean;
     }
   ): Promise<Awaited<T>> {
-    const dataKey = generateCacheKey(keys);
-    const freshKey = generateFreshKey(keys);
+    const dataKey = generateSWRDataKey(keys);
+    const swrKey = generateCacheKey(keys);
 
     // Multiple concurrent calls with the same key should re-use the same promise
     return ConcurrentCachedCall(dataKey, async () => {
@@ -860,7 +860,7 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
       const [redisValue, isStale] = await Promise.all([
         getRedisCacheValue<Awaited<T>>(dataKey, false),
-        getRedisValue(freshKey).then((value) => value == null),
+        getRedisValue(swrKey).then((value) => value == null),
       ]);
 
       if (redisValue !== NotFoundSymbol) {
@@ -870,8 +870,8 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
             : null;
 
           setRedisValue({
-            key: freshKey,
-            value: freshCacheValue,
+            key: swrKey,
+            value: swrFlagValue,
             ttl: getExpirySeconds(revalidationTTL),
             // NX so that only 1 instance can do the revalidation at a time
             nx: true,
@@ -881,8 +881,8 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
 
               if (staleCheckTracing) {
                 logMessage("STALE_REVALIDATION_CHECK", {
-                  key: dataKey,
-                  freshKey,
+                  dataKey,
+                  swrKey,
                   time: staleCheckTracing(),
                   shouldRevalidate: instanceOwnsRevalidation,
                 });
@@ -894,8 +894,8 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
               if (staleCheckTracing) {
                 logMessage("STALE_REVALIDATION_CHECK", {
                   error: true,
-                  key: dataKey,
-                  freshKey,
+                  dataKey,
+                  swrKey,
                   time: staleCheckTracing(),
                   shouldRevalidate: false,
                 });
@@ -917,8 +917,8 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
                 .then(() => {
                   if (backgroundRevalidationTracing) {
                     logMessage("STALE_BACKGROUND_REVALIDATION", {
-                      key: dataKey,
-                      freshKey,
+                      dataKey,
+                      swrKey,
                       time: backgroundRevalidationTracing(),
                     });
                   }
@@ -995,14 +995,14 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
                 .catch(onError),
               revalidationTtlSeconds > 0 &&
                 setRedisValue({
-                  key: freshKey,
-                  value: freshCacheValue,
+                  key: swrKey,
+                  value: swrFlagValue,
                   ttl: revalidationTtlSeconds,
                 })
                   .then(() => {
                     if (tracing) {
                       logMessage("REDIS_SET", {
-                        key: freshKey,
+                        key: swrKey,
                         expirySeconds: revalidationTtlSeconds,
                         time: tracing(),
                       });
@@ -1153,9 +1153,9 @@ export function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">({
     getCached,
     getStaleWhileRevalidate,
     generateCacheKey,
-    generateFreshKey,
+    generateSWRDataKey,
     keyPrefix,
-    freshKeyPrefix,
+    swrKeyPrefix,
     memoryCache,
     invalidateCache,
     setCache,

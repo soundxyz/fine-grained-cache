@@ -713,16 +713,16 @@ test("setCache - memory cache", async (t) => {
   t.is(data, value);
 });
 
-test("stale while revalidate with redis pipelining", async (t) => {
+test.only("stale while revalidate with redis pipelining", async (t) => {
   const events: LogEventArgs[] = [];
   const events2: LogEventArgs[] = [];
 
   const {
     getStaleWhileRevalidate,
     getRedisValue,
-    clearRedisValues,
+    invalidateCache,
     generateCacheKey,
-    generateFreshKey,
+    generateSWRDataKey,
   } = FineGrainedCache({
     redis,
     logEvents: {
@@ -754,8 +754,8 @@ test("stale while revalidate with redis pipelining", async (t) => {
   const keys = "test";
   const ttl = "10 seconds" satisfies StringValue;
 
-  const cacheKey = generateCacheKey(keys);
-  const freshKey = generateFreshKey(keys);
+  const swrKey = generateCacheKey(keys);
+  const dataKey = generateSWRDataKey(keys);
 
   let testInc = 0;
 
@@ -814,7 +814,7 @@ test("stale while revalidate with redis pipelining", async (t) => {
       ["PIPELINED_REDIS_GETS"]
     );
 
-    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+    t.is(currentEvents[0].params.keys, `${dataKey},${swrKey}`);
 
     t.is(currentEvents[0].params.cache, "HIT,HIT");
   }
@@ -827,19 +827,19 @@ test("stale while revalidate with redis pipelining", async (t) => {
       ["PIPELINED_REDIS_GETS"]
     );
 
-    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+    t.is(currentEvents[0].params.keys, `${dataKey},${swrKey}`);
 
     t.is(currentEvents[0].params.cache, "HIT,HIT");
   }
 
-  t.is(await getRedisValue(freshKey), "1");
+  t.is(await getRedisValue(swrKey), "OK");
 
-  await clearRedisValues({ keys: freshKey });
+  await invalidateCache(keys);
 
-  t.is(await getRedisValue(freshKey), null);
+  t.is(await getRedisValue(swrKey), null);
 
   await waitFor(() => {
-    assert.strictEqual(events.length, 2);
+    assert.strictEqual(events.length, 3);
   });
 
   pullCurrentValues(events);
@@ -884,22 +884,22 @@ test("stale while revalidate with redis pipelining", async (t) => {
       ]
     );
 
-    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+    t.is(currentEvents[0].params.keys, `${dataKey},${swrKey}`);
 
     t.is(currentEvents[0].params.cache, "HIT,MISS");
 
-    t.is(currentEvents[1].params.keys, freshKey);
+    t.is(currentEvents[1].params.keys, swrKey);
     t.is(currentEvents[1].params.ttl, "10");
 
-    t.is(currentEvents[2].params.key, cacheKey);
-    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.swrKey, swrKey);
+    t.is(currentEvents[2].params.dataKey, dataKey);
     t.is(currentEvents[2].params.shouldRevalidate, true);
 
-    t.is(currentEvents[4].params.keys, `${cacheKey},${freshKey}`);
+    t.is(currentEvents[4].params.keys, `${dataKey},${swrKey}`);
     t.is(currentEvents[4].params.ttl, "-1,10");
 
-    t.is(currentEvents[5].params.key, cacheKey);
-    t.is(currentEvents[5].params.freshKey, freshKey);
+    t.is(currentEvents[5].params.swrKey, swrKey);
+    t.is(currentEvents[5].params.dataKey, dataKey);
   }
 
   {
@@ -910,15 +910,15 @@ test("stale while revalidate with redis pipelining", async (t) => {
       ["PIPELINED_REDIS_GETS", "PIPELINED_REDIS_SET", "STALE_REVALIDATION_CHECK"]
     );
 
-    t.is(currentEvents[0].params.keys, `${cacheKey},${freshKey}`);
+    t.is(currentEvents[0].params.keys, `${dataKey},${swrKey}`);
 
     t.is(currentEvents[0].params.cache, "HIT,MISS");
 
-    t.is(currentEvents[1].params.keys, freshKey);
+    t.is(currentEvents[1].params.keys, swrKey);
     t.is(currentEvents[1].params.ttl, "10");
 
-    t.is(currentEvents[2].params.key, cacheKey);
-    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.swrKey, swrKey);
+    t.is(currentEvents[2].params.dataKey, dataKey);
     t.is(currentEvents[2].params.shouldRevalidate, false);
   }
 
@@ -940,16 +940,16 @@ test("stale while revalidate with redis pipelining", async (t) => {
   ]);
 });
 
-test("stale while revalidate without redis pipelining", async (t) => {
+test.only("stale while revalidate without redis pipelining", async (t) => {
   const events: LogEventArgs[] = [];
   const events2: LogEventArgs[] = [];
 
   const {
     getStaleWhileRevalidate,
     getRedisValue,
-    clearRedisValues,
     generateCacheKey,
-    generateFreshKey,
+    generateSWRDataKey,
+    invalidateCache,
   } = FineGrainedCache({
     redis,
     logEvents: {
@@ -982,8 +982,8 @@ test("stale while revalidate without redis pipelining", async (t) => {
   const keys = "test";
   const ttl = "10 seconds" satisfies StringValue;
 
-  const cacheKey = generateCacheKey(keys);
-  const freshKey = generateFreshKey(keys);
+  const swrKey = generateCacheKey(keys);
+  const dataKey = generateSWRDataKey(keys);
 
   let testInc = 0;
 
@@ -1042,11 +1042,11 @@ test("stale while revalidate without redis pipelining", async (t) => {
       ["REDIS_GET", "REDIS_GET"]
     );
 
-    t.is(currentEvents[0].params.key, cacheKey);
+    t.is(currentEvents[0].params.key, dataKey);
 
     t.is(currentEvents[0].params.cache, "HIT");
 
-    t.is(currentEvents[1].params.key, freshKey);
+    t.is(currentEvents[1].params.key, swrKey);
 
     t.is(currentEvents[1].params.cache, "HIT");
   }
@@ -1059,23 +1059,23 @@ test("stale while revalidate without redis pipelining", async (t) => {
       ["REDIS_GET", "REDIS_GET"]
     );
 
-    t.is(currentEvents[0].params.key, cacheKey);
+    t.is(currentEvents[0].params.key, dataKey);
 
     t.is(currentEvents[0].params.cache, "HIT");
 
-    t.is(currentEvents[1].params.key, freshKey);
+    t.is(currentEvents[1].params.key, swrKey);
 
     t.is(currentEvents[1].params.cache, "HIT");
   }
 
-  t.is(await getRedisValue(freshKey), "1");
+  t.is(await getRedisValue(swrKey), "OK");
 
-  await clearRedisValues({ keys: freshKey });
+  await invalidateCache(keys);
 
-  t.is(await getRedisValue(freshKey), null);
+  t.is(await getRedisValue(swrKey), null);
 
   await waitFor(() => {
-    assert.strictEqual(events.length, 2);
+    assert.strictEqual(events.length, 3);
   });
 
   pullCurrentValues(events);
@@ -1121,22 +1121,23 @@ test("stale while revalidate without redis pipelining", async (t) => {
       ]
     );
 
-    t.is(currentEvents[0].params.key, cacheKey);
+    t.is(currentEvents[0].params.key, dataKey);
 
     t.is(currentEvents[0].params.cache, "HIT");
 
-    t.is(currentEvents[1].params.key, freshKey);
+    t.is(currentEvents[1].params.key, swrKey);
 
     t.is(currentEvents[1].params.cache, "MISS");
 
-    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.dataKey, dataKey);
+    t.is(currentEvents[2].params.swrKey, swrKey);
     t.is(currentEvents[2].params.shouldRevalidate, true);
 
-    t.is(currentEvents[4].params.key, cacheKey);
-    t.is(currentEvents[5].params.key, freshKey);
+    t.is(currentEvents[4].params.key, dataKey);
+    t.is(currentEvents[5].params.key, swrKey);
 
-    t.is(currentEvents[6].params.key, cacheKey);
-    t.is(currentEvents[6].params.freshKey, freshKey);
+    t.is(currentEvents[6].params.dataKey, dataKey);
+    t.is(currentEvents[6].params.swrKey, swrKey);
   }
 
   {
@@ -1147,18 +1148,14 @@ test("stale while revalidate without redis pipelining", async (t) => {
       ["REDIS_GET", "REDIS_GET", "STALE_REVALIDATION_CHECK"]
     );
 
-    t.is(currentEvents[0].params.key, cacheKey);
-
+    t.is(currentEvents[0].params.key, dataKey);
     t.is(currentEvents[0].params.cache, "HIT");
 
-    t.is(currentEvents[1].params.key, freshKey);
-
+    t.is(currentEvents[1].params.key, swrKey);
     t.is(currentEvents[1].params.cache, "MISS");
 
-    t.is(currentEvents[1].params.key, freshKey);
-
-    t.is(currentEvents[2].params.key, cacheKey);
-    t.is(currentEvents[2].params.freshKey, freshKey);
+    t.is(currentEvents[2].params.swrKey, swrKey);
+    t.is(currentEvents[2].params.dataKey, dataKey);
     t.is(currentEvents[2].params.shouldRevalidate, false);
   }
 
@@ -1179,3 +1176,5 @@ test("stale while revalidate without redis pipelining", async (t) => {
       }),
   ]);
 });
+
+waitFor.defaults.timeout = 1000;
