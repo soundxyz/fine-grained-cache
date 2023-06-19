@@ -39,7 +39,7 @@
     "test:watch:coverage": "bob-watch -w src test package.json -c \"pnpm test\""
   },
   "dependencies": {
-    "lru-cache": "^9.1.0",
+    "lru-cache": "^9.1.2",
     "ms": "3.0.0-canary.1",
     "superjson": "^1.12.2"
   },
