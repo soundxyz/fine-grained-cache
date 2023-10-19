@@ -50,7 +50,7 @@
     "bob-ts": "^4.1.1",
     "bob-tsm": "^1.1.2",
     "c8": "^7.13.0",
-    "concurrently": "^8.0.1",
+    "concurrently": "^8.2.2",
     "date-fns": "^2.29.3",
     "esbuild": "^0.17.17",
     "execa": "^7.1.1",
