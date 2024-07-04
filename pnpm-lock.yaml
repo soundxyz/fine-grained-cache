@@ -1,5 +1,9 @@
 lockfileVersion: '6.0'
 
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
 dependencies:
   lru-cache:
     specifier: ^9.1.0
@@ -23,10 +27,10 @@ devDependencies:
     version: 5.2.0
   bob-ts:
     specifier: ^4.1.1
-    version: 4.1.1(@types/node@18.15.11)(esbuild@0.17.17)(typescript@5.0.4)
+    version: 4.1.1(@types/node@18.15.11)(esbuild@0.17.17)(typescript@5.5.3)
   bob-tsm:
     specifier: ^1.1.2
-    version: 1.1.2(esbuild@0.17.17)(typescript@5.0.4)
+    version: 1.1.2(esbuild@0.17.17)(typescript@5.5.3)
   c8:
     specifier: ^7.13.0
     version: 7.13.0
@@ -52,8 +56,8 @@ devDependencies:
     specifier: 5.0.0-beta.2
     version: 5.0.0-beta.2
   typescript:
-    specifier: ^5.0.4
-    version: 5.0.4
+    specifier: ^5.5.3
+    version: 5.5.3
   wait-for-expect:
     specifier: ^3.0.2
     version: 3.0.2
@@ -787,7 +791,7 @@ packages:
       rollup: 2.79.1
     dev: true
 
-  /bob-ts@4.1.1(@types/node@18.15.11)(esbuild@0.17.17)(typescript@5.0.4):
+  /bob-ts@4.1.1(@types/node@18.15.11)(esbuild@0.17.17)(typescript@5.5.3):
     resolution: {integrity: sha512-lXvGGP46GSU10LMHB27Kq2PZl+DaK1L5geHxxzLw/QklEWnvfzLPJsH9YGvV9F4AdIGJp85FTC1xIfanwd3NbQ==}
     engines: {node: '>=14.13.1'}
     hasBin: true
@@ -805,10 +809,10 @@ packages:
       bob-esbuild-plugin: 4.0.0(esbuild@0.17.17)(rollup@2.79.1)
       esbuild: 0.17.17
       rollup: 2.79.1
-      typescript: 5.0.4
+      typescript: 5.5.3
     dev: true
 
-  /bob-tsm@1.1.2(esbuild@0.17.17)(typescript@5.0.4):
+  /bob-tsm@1.1.2(esbuild@0.17.17)(typescript@5.5.3):
     resolution: {integrity: sha512-5H6wIDpQTop5rt/5JRvtssmpiTkIqi1EBkpSy19GfReOed6QoeD+iJIRjNgyiI7ZsX1ogETxgN7KiW5Wx6pUEQ==}
     engines: {node: '>=14.13.1'}
     hasBin: true
@@ -820,7 +824,7 @@ packages:
         optional: true
     dependencies:
       esbuild: 0.17.17
-      typescript: 5.0.4
+      typescript: 5.5.3
     optionalDependencies:
       fsevents: 2.3.2
     dev: true
@@ -2999,9 +3003,9 @@ packages:
       is-typed-array: 1.1.10
     dev: true
 
-  /typescript@5.0.4:
-    resolution: {integrity: sha512-cW9T5W9xY37cc+jfEnaUvX91foxtHkza3Nw3wkoF4sSlKn0MONdkdEndig/qPBWXNkmplh3NzayQzCiHM4/hqw==}
-    engines: {node: '>=12.20'}
+  /typescript@5.5.3:
+    resolution: {integrity: sha512-/hreyEujaB0w76zKo6717l3L0o/qEUtRgdvUBvlkhoWeOVMjMuHNHk0BRBzikzuGDqNmPQbg5ifMEqsHLiIUcQ==}
+    engines: {node: '>=14.17'}
     hasBin: true
     dev: true
 
