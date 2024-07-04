@@ -44,7 +44,7 @@
     "superjson": "^1.12.2"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.26.1",
+    "@changesets/cli": "^2.27.7",
     "@types/node": "^18.15.11",
     "ava": "^5.2.0",
     "bob-ts": "^4.1.1",
