@@ -12,17 +12,17 @@ jobs:
         image: docker.dragonflydb.io/dragonflydb/dragonfly
         ports:
           - 6389:6379
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [16]
+        node-version: [22]
     steps:
-      - uses: actions/checkout@v3
-      - uses: pnpm/action-setup@v2.2.4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4.0.0
         with:
-          version: ^7.1.1
+          version: ^10.9.0
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
+        uses: useblacksmith/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: "pnpm"
