@@ -6,6 +6,68 @@ This module provides a flexible caching utility designed to work with Redis and 
 
 The `FineGrainedCache` function is a factory that creates a cache instance configured with your Redis client and other options.
 
+```typescript
+function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">(options: {
+  redis: Redis;
+  redLock?: {
+    client: RedLock;
+    maxExpectedTime?: StringValue;
+    retryLockTime?: StringValue;
+    /**
+     * @default false
+     */
+    useByDefault?: boolean;
+  };
+  keyPrefix?: KeyPrefix;
+  memoryCache?: MemoryCache<unknown>;
+  onError?: (err: unknown) => void;
+  /**
+   * Enable event logging
+   */
+  logEvents?: {
+    events: LoggedEvents;
+    /**
+     * @default console.log
+     */
+
+    log?: (args: LogEventArgs) => void;
+  };
+  /**
+   * Set a maximum amount of milliseconds for getCached to wait for the GET redis response
+   */
+  GETRedisTimeout?: number;
+  /**
+   * Enable usage of redis pipelines for redis GET.
+   *
+   * If "number" is specified, that's the maximum amount of operations to be sent in a single pipeline
+   */
+  pipelineRedisGET?: boolean | number;
+  /**
+   * Enable usage of redis pipelines for redis SET.
+   *
+   * If "number" is specified, that's the maximum amount of operations to be sent in a single pipeline
+   */
+
+  pipelineRedisSET?: boolean | number;
+  /**
+   * Should `getCached` use memory cache by default?
+   *
+   * It can be overriden on `getCached`
+   *
+   * @default true
+   */
+
+  defaultUseMemoryCache?: boolean;
+  /**
+   * Should `getCached` await the Redis set
+   *
+   * @default process.env.NODE_ENV === "test"
+   */
+
+  awaitRedisSet?: boolean;
+});
+```
+
 **Parameters:**
 
 - `options`: An object containing configuration options for the cache.
