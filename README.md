@@ -97,7 +97,34 @@ These are the primary functions for interacting with the cache.
 
 ### `getCached`
 
-Fetches a value from the cache or generates it using the provided callback if a cache miss occurs. Supports timed invalidation, locking, and stale-while-revalidate (implicitly via `ttl` and `timedInvalidation`).
+Fetches a value from the cache or generates it using the provided callback if a cache miss occurs. Supports timed invalidation, locking, and dynamic control over caching behavior via the callback options.
+
+#### `CachedCallback` Definition
+
+The callback function provided to `getCached` has the following definition:
+
+```typescript
+export type CachedCallback<T> = (options: {
+  setTTL(options: {
+    /**
+     * Set TTL to `null` to disable caching
+     */
+    ttl?: StringValue | "Infinity" | null;
+    timedInvalidation?: null | Date | (() => Date | Promise<Date>);
+  }): void;
+  getTTL(): {
+    ttl: StringValue | "Infinity" | null;
+    timedInvalidation: undefined | null | Date | (() => Date | Promise<Date>);
+  };
+}) => T;
+```
+
+The callback function `cb` is expected to return the value to be cached (it does not need to return a Promise directly, `getCached` handles the async aspect). It receives an object with the following functions:
+
+- `setTTL`: (`(options: { ttl?: StringValue | "Infinity" | null; timedInvalidation?: null | Date | (() => Date | Promise<Date>); }) => void`) A function that allows you to dynamically set or change the Time-To-Live (`ttl`) and the `timedInvalidation` date for the cache entry based on the result of the callback's execution.
+  - Setting `ttl` to `null` will disable caching for this specific execution.
+  - Setting `timedInvalidation` to `null` will remove any previously set timed invalidation for this entry.
+- `getTTL`: (`() => { ttl: StringValue | "Infinity" | null; timedInvalidation: undefined | null | Date | (() => Date | Promise<Date>); }`) A function to retrieve the currently configured `ttl` and `timedInvalidation` values.
 
 ```typescript
 <T>(
@@ -119,8 +146,8 @@ Fetches a value from the cache or generates it using the provided callback if a 
 
 - `cb`: (`CachedCallback<T>`) An asynchronous function that generates the value to be cached.
 - `options`: An object containing options for this specific cache retrieval.
-  - `timedInvalidation`: (`Date | (() => Date | Promise<Date>)`, optional) Specifies a future date or a function that returns a future date when the cache entry should be considered invalid, even if the `ttl` has not expired.
-  - `ttl`: (`StringValue | "Infinity"`) The time-to-live for the cache entry in Redis. Can be a string like "1m", "1h", "1d", or "Infinity".
+  - `timedInvalidation`: (`Date | (() => Date | Promise<Date>)`, optional) Specifies a future date or a function that returns a future date when the cache entry should be considered invalid, even if the `ttl` has not expired. This can be overridden dynamically by calling `setTTL` within the `cb` callback.
+  - `ttl`: (`StringValue | "Infinity"`) The initial time-to-live for the cache entry in Redis. Can be a string like "1m", "1h", "1d", or "Infinity". This value can be overridden dynamically by calling `setTTL` within the `cb` callback.
   - `keys`: (`string | [string, ...(string | number)[]]`) A string or an array of strings and numbers used to generate the cache key.
   - `maxExpectedTime`: (`StringValue`, optional) Overrides the default RedLock `maxExpectedTime` for this operation.
   - `retryLockTime`: (`StringValue`, optional) Overrides the default RedLock `retryLockTime` for this operation.
@@ -136,6 +163,38 @@ Fetches a value from the cache or generates it using the provided callback if a 
 
 Fetches a value using the stale-while-revalidate pattern. It immediately returns a potentially stale value from the cache while asynchronously updating it in the background.
 
+#### `StaleWhileRevalidateCallback` Definition
+
+The callback function provided to `getStaleWhileRevalidate` has the following definition:
+
+```typescript
+export type StaleWhileRevalidateCallback<T> = (options: {
+  setTTL(options: {
+    /**
+     * Set TTL to `null` to disable updating revalidation time
+     */
+    revalidationTTL?: StringValue | null;
+
+    /**
+     * Set TTL to `null` to disable caching
+     */
+    dataTTL?: StringValue | "Infinity" | null;
+  }): void;
+  getTTL(): {
+    revalidationTTL: StringValue | null;
+
+    dataTTL: StringValue | "Infinity" | null;
+  };
+}) => T;
+```
+
+The callback function `cb` is expected to return the fresh value (it does not need to return a Promise directly). It receives an object with the following functions:
+
+- `setTTL`: (`(options: { revalidationTTL?: StringValue | null; dataTTL?: StringValue | "Infinity" | null; }) => void`) A function that allows you to dynamically set or change the `revalidationTTL` and `dataTTL` for the cache entry based on the result of the callback's execution.
+  - Setting `revalidationTTL` to `null` will disable updating the revalidation time for this specific execution.
+  - Setting `dataTTL` to `null` will disable caching the data altogether for this execution.
+- `getTTL`: (`() => { revalidationTTL: StringValue | null; dataTTL: StringValue | "Infinity" | null; }`) A function to retrieve the currently configured `revalidationTTL` and `dataTTL` values.
+
 ```typescript
 <T>(
   cb: StaleWhileRevalidateCallback<T>,
@@ -150,10 +209,10 @@ Fetches a value using the stale-while-revalidate pattern. It immediately returns
 
 **Parameters:**
 
-- `cb`: (`StaleWhileRevalidateCallback<T>`) An asynchronous function that generates the fresh value.
+- `cb`: (`StaleWhileRevalidateCallback<T>`) An asynchronous function that generates the fresh value
 - `options`: An object containing options for this SWR operation.
-  - `revalidationTTL`: (`StringValue`) The duration after which the cached data is considered stale and a background revalidation is triggered.
-  - `dataTTL`: (`StringValue | "Infinity"`, optional) The maximum time the data is allowed to live in the cache, even if not revalidated. Defaults to `Infinity`.
+  - `revalidationTTL`: (`StringValue`) The duration after which the cached data is considered stale and a background revalidation is triggered. This can be overridden dynamically by calling `setTTL` within the `cb` callback.
+  - `dataTTL`: (`StringValue | "Infinity"`, optional) The maximum time the data is allowed to live in the cache, even if not revalidated. Defaults to `Infinity`. This can be overridden dynamically by calling `setTTL` within the `cb` callback.
   - `keys`: (`string | [string, ...(string | number)[]]`) A string or an array of strings and numbers used to generate the cache key.
   - `forceUpdate`: (`boolean`, optional) Forces the cache to regenerate the value using the callback immediately, ignoring any existing cache entry.
 
