@@ -1,5 +1,7 @@
 # Fine-Grained Cache
 
+[![NPM Version](https://img.shields.io/npm/v/%40soundxyz%2Ffine-grained-cache)](https://www.npmjs.com/package/@soundxyz/fine-grained-cache)
+
 This module provides a flexible caching utility designed to work with Redis and an in-memory cache (like LRUCache). It supports features like locking for preventing thundering herd problems, stale-while-revalidate patterns, timed invalidation, and fine-grained key invalidation.
 
 ## FineGrainedCache Factory
