@@ -74,7 +74,7 @@ function FineGrainedCache<KeyPrefix extends string = "fine-cache-v1">(options: {
 
 - `options`: An object containing configuration options for the cache.
   - `redis`: (`Redis`) The Redis client instance to use for caching.
-  - `redLock`: (`{ client: RedLock; maxExpectedTime?: StringValue; retryLockTime?: StringValue; useByDefault?: boolean; }`, optional) Configuration for RedLock for distributed locking.
+  - `redLock`: (`{ client: RedLock; maxExpectedTime?: StringValue; retryLockTime?: StringValue; useByDefault?: boolean; }`, optional, if not specified, locking functionality is not enabled) Configuration for RedLock for distributed locking.
     - `client`: (`RedLock`) The RedLock client instance.
     - `maxExpectedTime`: (`StringValue`, optional) Maximum time to wait for the lock.
     - `retryLockTime`: (`StringValue`, optional) Time to wait between lock retry attempts.
