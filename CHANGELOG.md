@@ -1,5 +1,11 @@
 # @soundxyz/fine-grained-cache
 
+## 3.1.1
+
+### Patch Changes
+
+- a8f7cec: Add documentation
+
 ## 3.1.0
 
 ### Minor Changes
